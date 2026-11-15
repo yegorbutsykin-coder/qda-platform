@@ -1,6 +1,7 @@
 // Hide the extra console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio;
 mod project;
 mod textfile;
 mod vault;
@@ -580,6 +581,34 @@ async fn save_project(app: AppHandle, state: State<'_, AppState>, id: String, da
     })
 }
 
+// ---------- audio (step 2.1) ----------
+
+/// The recording chosen for an interview: returns its fingerprint and lets the window play it.
+#[tauri::command]
+async fn attach_audio(app: AppHandle, path: String) -> Res<String> {
+    let p = std::path::Path::new(&path);
+    if !audio::is_audio(p) {
+        return Err("not_audio".into());
+    }
+    let fp = audio::fingerprint(p).map_err(io)?;
+    app.asset_protocol_scope().allow_file(p).map_err(|e| e.to_string())?;
+    Ok(fp)
+}
+
+/// On opening a project: "ok" (and playable), "missing" or "changed" (another file at that path).
+#[tauri::command]
+async fn allow_audio(app: AppHandle, path: String, fingerprint: String) -> Res<String> {
+    let p = std::path::Path::new(&path);
+    if !audio::is_audio(p) || !p.exists() {
+        return Ok("missing".into());
+    }
+    if audio::fingerprint(p).map_err(io)? != fingerprint {
+        return Ok("changed".into());
+    }
+    app.asset_protocol_scope().allow_file(p).map_err(|e| e.to_string())?;
+    Ok("ok".into())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -611,7 +640,9 @@ fn main() {
             restore_halves,
             read_transcript,
             load_project,
-            save_project
+            save_project,
+            attach_audio,
+            allow_audio
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

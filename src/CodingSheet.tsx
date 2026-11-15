@@ -148,6 +148,7 @@ const CAP = /(\p{Lu}[\p{Ll}'’ʼ-]*\p{Ll}|\p{Lu}{2,6})/gu;
 export default function CodingSheet(props: {
   iv: Interview; priv: Private; codes: Code[]; apps: App[]; notes: Record<string, Note>; me: string;
   original: boolean; underlines: boolean; focus: string | null; flagged: Set<string>; act: CodingActions; target?: number | null;
+  seek?: (t: string) => void; nowRep?: number | null;
 }) {
   const { iv, priv, codes, original, focus } = props;
   const [sel, setSel] = useState<Sel | null>(null);
@@ -197,8 +198,12 @@ export default function CodingSheet(props: {
       {reps.map((r, i) => {
         const ps = pieces(segsOf(i), apps.filter((a) => a.rep === i), original);
         return (
-          <div className={"prow" + (props.target === i ? " target" : "")} key={i} id={`rep-${i}`}>
-            <span className="tc">{r.t ?? ""}</span>
+          <div className={"prow" + (props.target === i ? " target" : "") + (props.nowRep === i ? " now" : "")} key={i} id={`rep-${i}`}>
+            {props.seek && r.t ? (
+              <button className="tcbtn" aria-label={`Відтворити з ${r.t}`} onClick={() => props.seek!(r.t!)}>
+                <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><path d="M2 1v8l7-4z" /></svg>{r.t}
+              </button>
+            ) : <span className="tc">{r.t ?? ""}</span>}
             <p className="ptext" data-rep={i} data-len={r.text.length}>
               {r.role && <b className="spk">{speaker(r.role, iv.card)}: </b>}
               {ps.map((p) => {

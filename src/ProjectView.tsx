@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import Player, { seconds } from "./Player";
 import { open } from "@tauri-apps/plugin-dialog";
 import { applyDict, guessRole, parseTranscript, suspects, type Role } from "./text";
 import CodingSheet, { type CodingActions } from "./CodingSheet";
@@ -116,6 +117,9 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   const [underlines, setUnderlines] = useState(true);
   const [leftTab, setLeftTab] = useState<"iv" | "codes">("iv");
   const [byCat, setByCat] = useState(false);
+  const [audioState, setAudioState] = useState<Record<string, string>>({});
+  const [nowRep, setNowRep] = useState<number | null>(null);
+  const audioEl = useRef<HTMLAudioElement | null>(null);
   const [target, setTarget] = useState<number | null>(null);
   const [sel, setSel] = useState<string>("");
   const [original, setOriginal] = useState(false);
@@ -131,6 +135,11 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
         const p = { ...emptyPrivate(), ...(r.private ?? {}) };
         setShared(s); setPriv(p);
         setSel(s.interviews[0]?.id ?? "");
+        // Recordings stay where they are: check each one and let the window play it.
+        for (const [id, a] of Object.entries(p.audio)) {
+          invoke<string>("allow_audio", { path: a.path, fingerprint: a.fp })
+            .then((st) => setAudioState((m) => ({ ...m, [id]: st })), () => setAudioState((m) => ({ ...m, [id]: "missing" })));
+        }
       })
       .catch((e) => setError(String(e)));
   }, [props.id]);
@@ -226,6 +235,37 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
     setSel(next[0]?.id ?? "");
   };
 
+  // ----- audio -----
+  const pickAudio = async () => {
+    const path = await open({ title: "Запис інтерв'ю", filters: [{ name: "Аудіо", extensions: ["mp3", "m4a", "wav", "mp4", "aac", "ogg"] }] });
+    if (typeof path !== "string" || !iv) return;
+    try {
+      const fp = await invoke<string>("attach_audio", { path });
+      const name = path.split(/[\\/]/).pop() ?? path;
+      commit({ ...shared, interviews: shared.interviews.map((x) => (x.id === iv.id ? { ...x, audio: "kept" as const } : x)) },
+        { ...priv, audio: { ...priv.audio, [iv.id]: { path, fp, name } } });
+      setAudioState((m) => ({ ...m, [iv.id]: "ok" }));
+    } catch (e) { setError(String(e) === "not_audio" ? "Це не аудіофайл (mp3, m4a, wav, mp4, aac, ogg)." : `Не вдалося відкрити запис: ${e}`); }
+  };
+  const audioDeleted = () => {
+    if (!iv) return;
+    const rest = { ...priv.audio };
+    delete rest[iv.id];
+    undoable("Позначено: запис видалено після звірки транскрипту.", { ...shared, interviews: shared.interviews.map((x) => (x.id === iv.id ? { ...x, audio: "deleted" as const } : x)) }, { ...priv, audio: rest });
+  };
+  const seek = (t: string) => {
+    const el = audioEl.current, sec = seconds(t);
+    if (!el || sec == null) return;
+    el.currentTime = sec;
+    el.play();
+  };
+  const onTime = (time: number) => {
+    const reps = (iv && priv.originals[iv.id]) || [];
+    let k: number | null = null;
+    reps.forEach((r, i) => { const sec = seconds(r.t); if (sec != null && sec <= time) k = i; });
+    setNowRep((prev) => (prev === k ? prev : k));
+  };
+
   // ----- coding -----
   const me = props.me;
   const act: CodingActions = {
@@ -303,7 +343,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                 </div>
                 {leftTab === "codes" && <CodesPanel shared={shared} priv={priv} method={meta.method} commit={commit} undoable={undoable} showFragments={(id) => { setFocus(id); setView("frags"); }} />}
                 {leftTab === "iv" && shared.interviews.map((x) => (
-                  <button key={x.id} className={"ivrow" + (x.id === sel ? " on" : "")} aria-current={x.id === sel} onClick={() => setSel(x.id)}>
+                  <button key={x.id} className={"ivrow" + (x.id === sel ? " on" : "")} aria-current={x.id === sel} onClick={() => { setSel(x.id); setNowRep(null); }}>
                     <span className="mono">{pad(x.n)}</span><span className="grow">{x.card.pseudonym}</span><span className={"stdot " + status[x.id]} title={STATUS[status[x.id]]} aria-label={STATUS[status[x.id]]} />
                   </button>
                 ))}
@@ -335,11 +375,36 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                     <div className="warnline">Ще не замінено: {ivSuspects.slice(0, 8).map((s) => `«${s.word}»`).join(", ")}{ivSuspects.length > 8 ? "…" : ""}. Колеги бачать ці слова як є.{" "}
                       <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={() => setView("dict")}>До словника замін →</button></div>
                   )}
+                  {iv.audio === "deleted" ? (
+                    <div className="audioline small">Запис видалено після звірки транскрипту.</div>
+                  ) : priv.audio[iv.id] && audioState[iv.id] === "ok" ? (
+                    <>
+                      <audio ref={audioEl} key={iv.id} src={convertFileSrc(priv.audio[iv.id].path)} preload="metadata" />
+                      <Player audio={audioEl} src={priv.audio[iv.id].path} name={priv.audio[iv.id].name} onTime={onTime} />
+                      <div className="row small" style={{ gap: "4px 16px" }}>
+                        <span>Запис: <span className="mono">{priv.audio[iv.id].name}</span> — лише на цьому комп'ютері.</span>
+                        <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={pickAudio}>Інший файл…</button>
+                        <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={audioDeleted}>Запис видалено після звірки</button>
+                      </div>
+                    </>
+                  ) : priv.audio[iv.id] ? (
+                    <div className="audioline warn">
+                      <span className="grow">{audioState[iv.id] === "changed" ? "За збереженим шляхом тепер інший файл — це не той запис." : audioState[iv.id] ? "Запис не знайдено: файл переміщено, перейменовано чи видалено." : "Перевіряю запис…"} <span className="mono small">{priv.audio[iv.id].path}</span></span>
+                      <button className="btn sm" onClick={pickAudio}>Вказати знову…</button>
+                      <button className="link" style={{ fontSize: 12 }} onClick={audioDeleted}>Запис видалено після звірки</button>
+                    </div>
+                  ) : (
+                    <div className="audioline">
+                      <span className="grow small">Аудіо не вказано. Запис не копіюється в проєкт: програма лише відтворює його з того місця, де він лежить, і таймкоди стають кнопками.</span>
+                      <button className="btn sm" onClick={pickAudio}>Вказати файл запису…</button>
+                    </div>
+                  )}
                   {focus && fragCode && (
                     <div className="warnline" style={{ borderStyle: "solid", borderColor: fragCode.color }}>Показано лише код «{fragCode.name}». <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={() => setFocus(null)}>Показати всі</button></div>
                   )}
                   <CodingSheet iv={iv} priv={priv} codes={byCat ? shared.codes.map((c) => ({ ...c, color: shared.cats.find((k) => k.id === c.cat)?.color ?? c.color })) : shared.codes} apps={shared.apps} notes={shared.notes} me={me} original={original}
-                    underlines={underlines} focus={focus} flagged={flagged} act={act} target={target} />
+                    underlines={underlines} focus={focus} flagged={flagged} act={act} target={target}
+                    seek={priv.audio[iv.id] && audioState[iv.id] === "ok" ? seek : undefined} nowRep={nowRep} />
                   <div className="legend small">
                     <span><mark className="repl">[ім'я]</mark> замінено за словником</span>
                     <span><mark className="orig">Оксана</mark> справжнє слово (лише в «Оригіналі»)</span>

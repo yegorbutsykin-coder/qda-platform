@@ -7,15 +7,16 @@ export type FieldType = "text" | "number" | "choice";
 export type Field = { id: string; name: string; type: FieldType; options?: string[] };
 export type Card = { pseudonym: string; age: string; gender: string; date: string; values: Record<string, string>; consent: boolean };
 export type SharedReplica = { t: string | null; role: Role | null; text: string };
-export type Interview = { id: string; n: number; card: Card; replicas: SharedReplica[]; added: number };
+export type Interview = { id: string; n: number; card: Card; replicas: SharedReplica[]; added: number; audio?: "kept" | "deleted" };
+export type AudioRef = { path: string; fp: string; name: string };
 export type Note = { text: string; by: string; at: number };
 export type Shared = { fields: Field[]; interviews: Interview[]; codes: Code[]; apps: App[]; notes: Record<string, Note>; cats: Cat[]; supers: Super[]; levels?: Levels };
 export type OrigReplica = Replica & { role: Role | null };
-export type Private = { originals: Record<string, OrigReplica[]>; dict: DictEntry[]; ignored: string[] };
+export type Private = { originals: Record<string, OrigReplica[]>; dict: DictEntry[]; ignored: string[]; audio: Record<string, AudioRef> };
 
 export const emptyShared = (): Shared => ({ fields: [], interviews: [], codes: [], apps: [], notes: {}, cats: [], supers: [] });
 export const noteKey = (iv: string, rep: number) => `${iv}:${rep}`;
-export const emptyPrivate = (): Private => ({ originals: {}, dict: [], ignored: [] });
+export const emptyPrivate = (): Private => ({ originals: {}, dict: [], ignored: [], audio: {} });
 export const newId = () => crypto.randomUUID();
 export const GENDERS = ["жінка", "чоловік", "інше", "не вказано"];
 

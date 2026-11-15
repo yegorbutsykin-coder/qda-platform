@@ -44,6 +44,9 @@
     "macOS": {
       "signingIdentity": "-",
       "minimumSystemVersion": "11.0"
-    }
+    },
+    "externalBin": [
+      "binaries/whisper-cli"
+    ]
   }
 }

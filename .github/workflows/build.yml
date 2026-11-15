@@ -34,6 +34,40 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_targets }}
+      # whisper.cpp for local transcription, bundled next to the program ("sidecar").
+      - uses: actions/cache@v4
+        id: whisper
+        with:
+          path: src-tauri/binaries
+          key: whisper-v1.9.5-${{ matrix.os }}-3
+      - name: Build whisper-cli (Mac, Intel + Apple Silicon, Metal)
+        if: matrix.name == 'macOS' && steps.whisper.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v1.9.5 https://github.com/ggml-org/whisper.cpp ../wcpp
+          cmake -S ../wcpp -B ../wbuild -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_SDL2=OFF \
+            -DGGML_NATIVE=OFF -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          cmake --build ../wbuild --config Release --target whisper-cli -j 4
+          mkdir -p src-tauri/binaries
+          for t in universal-apple-darwin aarch64-apple-darwin x86_64-apple-darwin; do cp ../wbuild/bin/whisper-cli src-tauri/binaries/whisper-cli-$t; done
+          lipo -info src-tauri/binaries/whisper-cli-universal-apple-darwin
+      - name: Build whisper-cli (Windows)
+        if: matrix.name == 'Windows' && steps.whisper.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          git clone --depth 1 --branch v1.9.5 https://github.com/ggml-org/whisper.cpp ../wcpp
+          cmake -S ../wcpp -B ../wbuild -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_SDL2=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \
+            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build ../wbuild --config Release --target whisper-cli -j 4
+          mkdir -p src-tauri/binaries
+          cp ../wbuild/bin/Release/whisper-cli.exe src-tauri/binaries/whisper-cli-x86_64-pc-windows-msvc.exe
+      - name: Check transcription works (tiny model, sample recording)
+        if: matrix.name == 'macOS'
+        run: |
+          curl -L --fail -sS -o /tmp/tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+          echo "bd577a113a864445d4c299885e0cb97d4ba92b5f  /tmp/tiny.bin" | shasum -c
+          curl -L --fail -sS -o /tmp/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.9.5/samples/jfk.wav
+          src-tauri/binaries/whisper-cli-universal-apple-darwin -m /tmp/tiny.bin -f /tmp/jfk.wav -l auto -ng | tee /tmp/out.txt
+          grep -qi "country" /tmp/out.txt
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri

@@ -4,6 +4,7 @@
 mod audio;
 mod project;
 mod textfile;
+mod transcribe;
 mod vault;
 
 use serde::Serialize;
@@ -33,6 +34,7 @@ struct AppState {
     pending: Mutex<Option<Pending>>,
     /// Supervisor's half of a just-created student project, until it is saved to a file.
     pending_half: Mutex<Option<(String, String, Zeroizing<Vec<u8>>)>>,
+    jobs: transcribe::Jobs,
 }
 
 #[derive(Serialize)]
@@ -609,6 +611,70 @@ async fn allow_audio(app: AppHandle, path: String, fingerprint: String) -> Res<S
     Ok("ok".into())
 }
 
+// ---------- transcription (step 2.2) ----------
+
+fn models_dir(app: &AppHandle) -> Res<PathBuf> {
+    app.path().app_data_dir().map(|d| d.join("models")).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+struct ModelState {
+    id: &'static str,
+    label: &'static str,
+    mib: u64,
+    downloaded: bool,
+    download: Option<transcribe::Progress>,
+}
+
+#[tauri::command]
+fn models_list(app: AppHandle, state: State<'_, AppState>) -> Res<Vec<ModelState>> {
+    let d = models_dir(&app)?;
+    let downloads = state.jobs.downloads.lock().unwrap();
+    Ok(transcribe::MODELS
+        .iter()
+        .map(|m| ModelState { id: m.id, label: m.label, mib: m.mib, downloaded: transcribe::model_path(&d, m.id).exists(), download: downloads.get(m.id).cloned() })
+        .collect())
+}
+
+#[tauri::command]
+fn download_model(app: AppHandle, state: State<'_, AppState>, id: String) -> Res<()> {
+    let m = transcribe::model(&id).ok_or("bad_input")?;
+    if state.jobs.downloads.lock().unwrap().get(m.id).is_some_and(|p| p.state == "running") {
+        return Ok(());
+    }
+    transcribe::download(&state.jobs, models_dir(&app)?, m);
+    Ok(())
+}
+
+/// Starts transcribing in the background; `job` is the interview id.
+#[tauri::command]
+fn start_transcription(app: AppHandle, state: State<'_, AppState>, job: String, path: String, model: String, language: String) -> Res<()> {
+    if job.is_empty() || job.len() > 64 || !job.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("bad_input".into());
+    }
+    if !["auto", "uk", "ru", "en"].contains(&language.as_str()) || !audio::is_audio(std::path::Path::new(&path)) {
+        return Err("bad_input".into());
+    }
+    let m = transcribe::model(&model).ok_or("bad_input")?;
+    let file = transcribe::model_path(&models_dir(&app)?, m.id);
+    if !file.exists() {
+        return Err("no_model".into());
+    }
+    transcribe::start(&state.jobs, job, PathBuf::from(path), file, language);
+    Ok(())
+}
+
+/// None: no such job in this run of the program (e.g. it was closed meanwhile). Finished results are handed over once.
+#[tauri::command]
+fn transcription_status(state: State<'_, AppState>, job: String) -> Option<transcribe::Progress> {
+    let mut map = state.jobs.transcriptions.lock().unwrap();
+    let p = map.get(&job).cloned()?;
+    if p.state != "running" {
+        map.remove(&job);
+    }
+    Some(p)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -642,7 +708,11 @@ fn main() {
             load_project,
             save_project,
             attach_audio,
-            allow_audio
+            allow_audio,
+            models_list,
+            download_model,
+            start_transcription,
+            transcription_status
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

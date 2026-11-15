@@ -235,24 +235,24 @@ export default function Projects(props: { aside: ReactNode; msg: string; setMsg:
                   <span className="lead" style={{ maxWidth: 440 }}>Створіть новий проєкт або відкрийте резервну копію чи файл, який вам надіслали. Кожен проєкт — один зашифрований файл у теці «Документи / QDA».</span>
                 </div>
               ) : (
-                <div className="table">
-                  <div className="trow head"><span>Проєкт</span><span>Метод</span><span>Тип</span><span>Резервна копія</span><span /></div>
+                <ul className="plist">
                   {list.map((e) => (
-                    <div className="trow" key={e.id}>
-                      <span className="stack" style={{ gap: 3 }}>
-                        <span style={{ fontSize: 14, fontWeight: 500 }}>{e.name}</span>
-                        <span className="small">{e.exists ? `змінено ${fmt(e.modified)}` : "файл не знайдено"}</span>
-                      </span>
-                      <span>{e.method}</span>
-                      <span style={{ lineHeight: 1.45 }}>{e.student ? `${workLabel(e.student)} · супервайзер(ка): ${e.student.supervisor}` : "Власне дослідження"}</span>
-                      <span className={stale(e) ? "accent" : "small"}>{ago(e.last_backup)}</span>
-                      <span className="row" style={{ justifyContent: "flex-end", gap: 6 }}>
+                    <li key={e.id}>
+                      <div className="stack" style={{ gap: 4, minWidth: 0 }}>
+                        <span className="pname">{e.name}</span>
+                        <span className="small">
+                          {e.method} · {e.student ? `${workLabel(e.student)} · супервайзер(ка): ${e.student.supervisor}` : "Власне дослідження"}
+                          {" · "}{e.exists ? `змінено ${fmt(e.modified)}` : "файл не знайдено"}
+                        </span>
+                        <span className={stale(e) ? "accent" : "small"}>Резервна копія: {ago(e.last_backup)}</span>
+                      </div>
+                      <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
                         <button className="btn sm quiet" disabled={!e.exists} onClick={() => { setTarget(e); setMsg(""); go("backup"); }}>Копія</button>
                         <button className="btn sm primary" disabled={!e.exists || busy} onClick={() => openProject(e)}>Відкрити →</button>
-                      </span>
-                    </div>
+                      </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
               <span className="small">Кожен проєкт — один зашифрований файл. Відкривається вашим паролем входу, окремого пароля немає.</span>
             </section>

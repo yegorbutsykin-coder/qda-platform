@@ -232,3 +232,8 @@ mark.suspect { background: transparent; border-bottom: 2px dashed var(--accent);
 .tcbtn:hover { background: var(--bar); color: var(--ink); }
 .prow.now .ptext { box-shadow: -12px 0 0 -9px var(--accent); }
 .prow.now .tcbtn { color: var(--accent); font-weight: 500; }
+
+/* step 2.2: transcription */
+.txpanel { display: flex; flex-direction: column; gap: 10px; padding: 28px 32px; background: var(--panel); border: 1px solid var(--line2); font-size: 14px; }
+.txbar { height: 4px; background: var(--line3); }
+.txbar div { height: 4px; background: var(--accent); transition: width 0.5s; }

@@ -178,3 +178,30 @@ export const READY: Record<Kind, string[]> = {
   org: ["[установа]", "[організація]", "[військова частина]"],
   other: ["[приховано]", "[дата]"],
 };
+
+// ---------- transcription result ----------
+
+export type TxSegment = { start_ms: number; end_ms: number; text: string };
+
+const hms = (ms: number) => {
+  const v = Math.floor(ms / 1000);
+  return [Math.floor(v / 3600), Math.floor((v % 3600) / 60), v % 60].map((x) => String(x).padStart(2, "0")).join(":");
+};
+
+/**
+ * Whisper gives short segments without speakers. A pause of `gapMs` or more usually means
+ * another turn, so it starts a new paragraph (replica); long monologues are cut every `maxMs`.
+ */
+export function segmentsToReplicas(segs: TxSegment[], gapMs = 1500, maxMs = 60_000): Replica[] {
+  const out: (Replica & { from: number; to: number })[] = [];
+  for (const s of segs) {
+    const text = s.text.trim();
+    if (!text) continue;
+    const last = out[out.length - 1];
+    if (last && s.start_ms - last.to < gapMs && s.end_ms - last.from <= maxMs) {
+      last.text += " " + text;
+      last.to = s.end_ms;
+    } else out.push({ t: hms(s.start_ms), label: null, text, from: s.start_ms, to: s.end_ms });
+  }
+  return out.map(({ t, label, text }) => ({ t, label, text }));
+}

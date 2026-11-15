@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyDict, formsFound, guessRole, joinSegments, parseTranscript, stems, suspects, type DictEntry } from "./text";
+import { applyDict, formsFound, guessRole, joinSegments, parseTranscript, segmentsToReplicas, stems, suspects, type DictEntry } from "./text";
 
 const entry = (from: string, to = "[ім'я]", extra: Partial<DictEntry> = {}): DictEntry =>
   ({ id: from, kind: "person", from: from.split(",").map((s) => s.trim()), to, scope: "all", caps: true, ...extra });
@@ -85,5 +85,24 @@ describe("suspects", () => {
 
   it("all-caps short words look like organisations", () => {
     expect(suspects(segs("Я працювала в АТБ два роки."), [])[0]).toMatchObject({ word: "АТБ", kind: "org" });
+  });
+});
+
+describe("transcription into replicas", () => {
+  it("joins close segments, splits on pauses and long monologues", () => {
+    const r = segmentsToReplicas([
+      { start_ms: 0, end_ms: 3000, text: " Розкажіть, будь ласка." },
+      { start_ms: 3400, end_ms: 5000, text: " З чого все почалося?" },
+      { start_ms: 7200, end_ms: 9000, text: " Ну, це було в березні." },
+      { start_ms: 9100, end_ms: 9100, text: "  " },
+      { start_ms: 3_600_000, end_ms: 3_601_000, text: "Так." },
+    ]);
+    expect(r).toEqual([
+      { t: "00:00:00", label: null, text: "Розкажіть, будь ласка. З чого все почалося?" },
+      { t: "00:00:07", label: null, text: "Ну, це було в березні." },
+      { t: "01:00:00", label: null, text: "Так." },
+    ]);
+    const long = Array.from({ length: 30 }, (_, i) => ({ start_ms: i * 3000, end_ms: i * 3000 + 2900, text: "слово" }));
+    expect(segmentsToReplicas(long).length).toBe(2);
   });
 });

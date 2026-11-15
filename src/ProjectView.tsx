@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import Player, { seconds } from "./Player";
 import { open } from "@tauri-apps/plugin-dialog";
-import { applyDict, guessRole, parseTranscript, suspects, type Role } from "./text";
+import { applyDict, guessRole, parseTranscript, segmentsToReplicas, suspects, type Role, type TxSegment } from "./text";
 import CodingSheet, { type CodingActions } from "./CodingSheet";
 import Codebook from "./Codebook";
 import CodesPanel from "./CodesPanel";
 import { nextColor, quote, statuses, type Code } from "./coding";
 import { applyDict as segsFor } from "./text";
-import { emptyPrivate, emptyShared, GENDERS, newId, noteKey, pad, rebuild, speaker, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
+import { emptyPrivate, emptyShared, GENDERS, newId, noteKey, pad, rebuild, speaker, type Tx, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
 import Dictionary from "./Dictionary";
 
 type Meta = { name: string; method: string; student: { work: string; supervisor: string } | null };
@@ -173,6 +173,69 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   const flagged = new Set(allSuspects.filter((s) => !iv || s.interviews.includes(iv.id)).map((s) => s.key));
   const ivSuspects = allSuspects.filter((s) => iv && s.interviews.includes(iv.id));
 
+  // ----- transcription -----
+  type ModelState = { id: string; label: string; mib: number; downloaded: boolean; download: { state: string; pct: number; error?: string } | null };
+  type TxStatus = { state: string; pct: number; error?: string; segments?: TxSegment[] } | null;
+  const [models, setModels] = useState<ModelState[]>([]);
+  const [model, setModel] = useState("");
+  const [lang, setLang] = useState("auto");
+  const [audioFile, setAudioFile] = useState("");
+  const [txPct, setTxPct] = useState<Record<string, number>>({});
+  const latest = useRef({ shared, priv });
+  latest.current = { shared, priv };
+  const loadModels = () => invoke<ModelState[]>("models_list").then((ms) => {
+    setModels(ms);
+    setModel((cur) => cur || ms.find((m) => m.downloaded)?.id || "");
+  });
+  const setTx = (id: string, tx: Tx | undefined, originals?: OrigReplica[]) => {
+    const { shared: s, priv: p } = latest.current;
+    commit({ ...s, interviews: s.interviews.map((x) => (x.id === id ? { ...x, tx } : x)) },
+      originals ? { ...p, originals: { ...p.originals, [id]: originals } } : p);
+  };
+  const running = shared.interviews.filter((x) => x.tx?.state === "running").map((x) => x.id).join(",");
+  useEffect(() => {
+    if (!running) return;
+    const t = window.setInterval(async () => {
+      for (const id of running.split(",")) {
+        const st = await invoke<TxStatus>("transcription_status", { job: id }).catch(() => null);
+        const ivx = latest.current.shared.interviews.find((x) => x.id === id);
+        if (!ivx?.tx) continue;
+        if (!st) setTx(id, { ...ivx.tx, state: "interrupted" });
+        else if (st.state === "running") setTxPct((m) => ({ ...m, [id]: st.pct }));
+        else if (st.state === "done") {
+          setTx(id, undefined, segmentsToReplicas(st.segments ?? []).map((r) => ({ ...r, role: null })));
+          notify(`Транскрипцію інтерв'ю ${pad(ivx.n)} · ${ivx.card.pseudonym} завершено.`);
+        } else setTx(id, { ...ivx.tx, state: "error", error: st.error });
+      }
+    }, 1500);
+    return () => window.clearInterval(t);
+  }, [running]);
+  const downloading = models.some((m) => m.download?.state === "running");
+  useEffect(() => {
+    if (!downloading) return;
+    const t = window.setInterval(loadModels, 1000);
+    return () => window.clearInterval(t);
+  }, [downloading]);
+  const downloadModel = (id: string) => invoke("download_model", { id }).then(loadModels).catch((e) => setError(String(e)));
+  const startTx = async (id: string, path: string, m: string, l: string) => {
+    try {
+      await invoke("start_transcription", { job: id, path, model: m, language: l });
+      setTxPct((x) => ({ ...x, [id]: 0 }));
+      return true;
+    } catch (e) {
+      setError(String(e) === "no_model" ? "Модель ще не завантажено." : `Не вдалося почати транскрипцію: ${e}`);
+      return false;
+    }
+  };
+  const restartTx = async () => {
+    if (!iv?.tx || !priv.audio[iv.id]) return;
+    if (await startTx(iv.id, priv.audio[iv.id].path, iv.tx.model, iv.tx.lang)) setTx(iv.id, { ...iv.tx, state: "running", error: undefined });
+  };
+  const txError = (e?: string) =>
+    !e ? "" : e.startsWith("no_network") ? "Немає з'єднання з інтернетом." : e === "bad_checksum" ? "Завантажений файл не збігся з контрольною сумою — його видалено; спробуйте ще раз."
+      : e === "no_whisper" ? "У програмі бракує модуля транскрипції — перевстановіть програму." : e === "format_windows" ? "На Windows поки що підтримуються лише wav, mp3, ogg, flac."
+      : e.startsWith("convert") ? "Не вдалося прочитати аудіофайл." : e;
+
   // ----- add interview -----
   const [file, setFile] = useState("");
   const [raw, setRaw] = useState("");
@@ -182,10 +245,12 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   const [realName, setRealName] = useState("");
   const parsed = useMemo(() => parseTranscript(raw, findSpk), [raw, findSpk]);
 
-  const startAdd = () => { setFile(""); setRaw(""); setFindSpk(true); setRoles({}); setCard(emptyCard()); setRealName(""); setError(""); setView("add"); };
+  const startAdd = () => { setAudioFile(""); loadModels().catch(() => {}); setFile(""); setRaw(""); setFindSpk(true); setRoles({}); setCard(emptyCard()); setRealName(""); setError(""); setView("add"); };
   const pickFile = async () => {
-    const p = await open({ title: "Транскрипт інтерв'ю", filters: [{ name: "Текст", extensions: ["docx", "txt"] }] });
+    const p = await open({ title: "Інтерв'ю: запис або транскрипт", filters: [{ name: "Аудіо або текст", extensions: ["mp3", "m4a", "wav", "mp4", "aac", "ogg", "docx", "txt"] }] });
     if (typeof p !== "string") return;
+    if (/\.(mp3|m4a|wav|mp4|aac|ogg)$/i.test(p)) { setAudioFile(p); setFile(p); setRaw(""); setError(""); return; }
+    setAudioFile("");
     try {
       const text = await invoke<string>("read_transcript", { path: p });
       if (!text.trim()) throw "У файлі не знайдено тексту.";
@@ -197,10 +262,28 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
       setError(s === "bad_docx" ? "Не вдалося прочитати docx: файл пошкоджений або це не документ Word." : s === "unsupported" ? "Підтримуються файли .docx і .txt." : s === "too_big" ? "Файл завеликий (понад 50 МБ)." : s);
     }
   };
-  const addMissing = !raw ? "Оберіть файл." : !card.pseudonym.trim() ? "Потрібен псевдонім." : !card.consent ? "Позначте інформовану згоду." : "";
-  const saveInterview = () => {
+  const modelReady = models.some((m) => m.id === model && m.downloaded);
+  const addMissing = !raw && !audioFile ? "Оберіть файл." : audioFile && !modelReady ? "Оберіть завантажену модель." : !card.pseudonym.trim() ? "Потрібен псевдонім." : !card.consent ? "Позначте інформовану згоду." : "";
+  const saveInterview = async () => {
     if (addMissing) return;
     const id = newId();
+    if (audioFile) {
+      // Audio: the interview appears at once and fills in when the transcription finishes.
+      let fp: string;
+      try { fp = await invoke<string>("attach_audio", { path: audioFile }); } catch (e) { setError(`Не вдалося відкрити запис: ${e}`); return; }
+      if (!(await startTx(id, audioFile, model, lang))) return;
+      const n = Math.max(0, ...shared.interviews.map((x) => x.n)) + 1;
+      const dict = realName.trim() ? [...priv.dict, { id: newId(), kind: "person" as const, from: [realName.trim()], to: card.pseudonym.trim(), scope: id, caps: true }] : priv.dict;
+      const name = audioFile.split(/[\\/]/).pop() ?? audioFile;
+      commit(
+        { ...shared, interviews: [...shared.interviews, { id, n, card: { ...card, pseudonym: card.pseudonym.trim() }, replicas: [], added: Date.now(), audio: "kept", tx: { state: "running", model, lang } }] },
+        { ...priv, originals: { ...priv.originals, [id]: [] }, dict, audio: { ...priv.audio, [id]: { path: audioFile, fp, name } } },
+      );
+      setAudioState((m) => ({ ...m, [id]: "ok" }));
+      setSel(id); setView("main");
+      notify(`Інтерв'ю ${pad(n)} · ${card.pseudonym.trim()} додано; транскрибується на цьому комп'ютері.`);
+      return;
+    }
     const n = Math.max(0, ...shared.interviews.map((x) => x.n)) + 1;
     const originals: OrigReplica[] = parsed.replicas.map((r) => ({ ...r, role: r.label ? roles[r.label] ?? "p" : null }));
     const dict = realName.trim()
@@ -344,7 +427,8 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                 {leftTab === "codes" && <CodesPanel shared={shared} priv={priv} method={meta.method} commit={commit} undoable={undoable} showFragments={(id) => { setFocus(id); setView("frags"); }} />}
                 {leftTab === "iv" && shared.interviews.map((x) => (
                   <button key={x.id} className={"ivrow" + (x.id === sel ? " on" : "")} aria-current={x.id === sel} onClick={() => { setSel(x.id); setNowRep(null); }}>
-                    <span className="mono">{pad(x.n)}</span><span className="grow">{x.card.pseudonym}</span><span className={"stdot " + status[x.id]} title={STATUS[status[x.id]]} aria-label={STATUS[status[x.id]]} />
+                    <span className="mono">{pad(x.n)}</span><span className="grow">{x.card.pseudonym}</span>{x.tx ? <span className={"small" + (x.tx.state === "running" ? "" : " accent")}>{x.tx.state === "running" ? `транскрибується… ${txPct[x.id] ?? 0}%` : x.tx.state === "error" ? "помилка" : "перервано"}</span>
+                      : <span className={"stdot " + status[x.id]} title={STATUS[status[x.id]]} aria-label={STATUS[status[x.id]]} />}
                   </button>
                 ))}
               </nav>
@@ -405,9 +489,28 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                   {focus && fragCode && (
                     <div className="warnline" style={{ borderStyle: "solid", borderColor: fragCode.color }}>Показано лише код «{fragCode.name}». <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={() => setFocus(null)}>Показати всі</button></div>
                   )}
+                  {iv.tx ? (
+                    <div className="txpanel">
+                      {iv.tx.state === "running" ? (
+                        <>
+                          <span style={{ fontWeight: 500 }}>Транскрибується на цьому комп'ютері… {txPct[iv.id] ?? 0}%</span>
+                          <div className="txbar" aria-hidden="true"><div style={{ width: `${txPct[iv.id] ?? 0}%` }} /></div>
+                          <span className="small">Запис нікуди не надсилається. Тим часом можна працювати з іншими інтерв'ю. Якщо закрити програму, транскрипцію доведеться почати знову.</span>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ fontWeight: 500 }}>{iv.tx.state === "error" ? "Транскрипція не вдалася." : "Транскрипцію перервано (програму закривали)."}</span>
+                          {iv.tx.error && <span className="small">{txError(iv.tx.error)}</span>}
+                          <div className="row"><button className="btn sm primary" disabled={audioState[iv.id] !== "ok"} onClick={restartTx}>Почати знову</button>
+                            {audioState[iv.id] !== "ok" && <span className="small">Спершу вкажіть файл запису (вище).</span>}</div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
                   <CodingSheet iv={iv} priv={priv} codes={byCat ? shared.codes.map((c) => ({ ...c, color: shared.cats.find((k) => k.id === c.cat)?.color ?? c.color })) : shared.codes} apps={shared.apps} notes={shared.notes} me={me} original={original}
                     underlines={underlines} focus={focus} flagged={flagged} act={act} target={target}
                     seek={priv.audio[iv.id] && audioState[iv.id] === "ok" ? seek : undefined} nowRep={nowRep} />
+                  )}
                   <div className="legend small">
                     <span><mark className="repl">[ім'я]</mark> замінено за словником</span>
                     <span><mark className="orig">Оксана</mark> справжнє слово (лише в «Оригіналі»)</span>
@@ -429,7 +532,32 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
               <span className="mono path">{file || "файл не обрано"}</span>
               <button className="btn sm" onClick={pickFile}>{file ? "Обрати інший…" : "Обрати файл…"}</button>
             </div>
-            <span className="small">Готовий транскрипт .docx або .txt. Аудіо й транскрипція — на наступному етапі. Файл лишається там, де був; у проєкт потрапляє лише зашифрований текст.</span>
+            <span className="small">Запис (mp3, m4a, wav, mp4) або готовий транскрипт (.docx, .txt). Файл лишається там, де був: запис не копіюється й нікуди не надсилається — програма транскрибує його на цьому комп'ютері; у проєкт потрапляє лише зашифрований текст.</span>
+            {audioFile && (
+              <div className="panel stack" style={{ gap: 10 }}>
+                <span className="label">Транскрипція на цьому комп'ютері</span>
+                <div className="stack" role="radiogroup" aria-label="Модель розпізнавання" style={{ gap: 6 }}>
+                  {models.map((m) => (
+                    <div key={m.id} className="row" style={{ gap: 10, flexWrap: "nowrap" }}>
+                      <label className="row grow" style={{ gap: 8, fontSize: 13, flexWrap: "nowrap", opacity: m.downloaded ? 1 : 0.7 }}>
+                        <input type="radio" name="model" disabled={!m.downloaded} checked={model === m.id} onChange={() => setModel(m.id)} />
+                        <span className="grow">{m.label} <span className="small mono">· {m.mib} МБ</span></span>
+                      </label>
+                      {m.downloaded ? <span className="small">завантажено</span>
+                        : m.download?.state === "running" ? <span className="small mono">завантажується… {m.download.pct}%</span>
+                        : <button className="btn sm quiet" onClick={() => downloadModel(m.id)}>Завантажити</button>}
+                    </div>
+                  ))}
+                  {models.filter((m) => m.download?.state === "error").map((m) => <span key={m.id} className="bad" style={{ fontSize: 12 }}>{m.label}: {txError(m.download!.error)}</span>)}
+                </div>
+                <span className="small">Модель завантажується один раз з офіційного сховища whisper.cpp (huggingface.co) і перевіряється за контрольною сумою. Аудіо при цьому нікуди не надсилається. Далі транскрипція працює без інтернету.</span>
+                <label className="row" style={{ gap: 8, fontSize: 13 }}>Мова запису
+                  <select className="input" style={{ height: 34, fontFamily: "inherit" }} value={lang} onChange={(e) => setLang(e.target.value)}>
+                    <option value="auto">визначити автоматично</option><option value="uk">українська</option><option value="ru">російська</option><option value="en">англійська</option>
+                  </select></label>
+                <span className="small">Для суржику й змішаної мови спробуйте «автоматично» і «українська» — порівняння моделей і мов з'явиться на наступному кроці. Мовців програма поки не розрізняє: репліки ділить за паузами, а хто говорить, позначите ви.</span>
+              </div>
+            )}
             {raw && (
               <>
                 <label className="check"><input type="checkbox" checked={findSpk} onChange={(e) => setFindSpk(e.target.checked)} /><span>Шукати позначки мовців</span></label>

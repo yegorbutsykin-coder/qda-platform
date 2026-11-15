@@ -48,7 +48,12 @@ fn docx_text(xml: &str) -> Result<String, String> {
         match reader.read_event().map_err(|_| "bad_docx")? {
             Event::Start(e) if e.name().as_ref() == b"w:t" => in_text = true,
             Event::End(e) if e.name().as_ref() == b"w:t" => in_text = false,
-            Event::Text(t) if in_text => out.push_str(&t.unescape().map_err(|_| "bad_docx")?),
+            Event::Text(t) if in_text => out.push_str(&t.decode().map_err(|_| "bad_docx")?),
+            // Entities (&amp;, &#1103;) arrive separately since quick-xml 0.38.
+            Event::GeneralRef(r) if in_text => match r.resolve_char_ref().map_err(|_| "bad_docx")? {
+                Some(c) => out.push(c),
+                None => out.push_str(quick_xml::escape::resolve_predefined_entity(&r.decode().map_err(|_| "bad_docx")?).unwrap_or("")),
+            },
             Event::End(e) if e.name().as_ref() == b"w:p" => out.push('\n'),
             Event::Empty(e) if e.name().as_ref() == b"w:tab" => out.push('\t'),
             Event::Empty(e) if matches!(e.name().as_ref(), b"w:br" | b"w:cr") => out.push('\n'),

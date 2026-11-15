@@ -79,10 +79,18 @@ function variantPattern(v: string, caps: boolean): string {
     .join("\\s+");
 }
 
+const compiled = new Map<string, RegExp | null>();
+
+/** Compiled once per spelling list: a big project runs the dictionary over thousands of replicas. */
 export function entryRegex(e: DictEntry): RegExp | null {
-  const vs = e.from.map((v) => v.trim()).filter(Boolean).sort((a, b) => b.length - a.length);
-  if (!vs.length) return null;
-  return new RegExp(`(?<![${LETTER}'’ʼ])(?:${vs.map((v) => variantPattern(v, e.caps)).join("|")})(?![${LETTER}])`, "gu");
+  const key = `${e.caps}|${e.from.join("|")}`;
+  if (!compiled.has(key)) {
+    const vs = e.from.map((v) => v.trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+    compiled.set(key, vs.length ? new RegExp(`(?<![${LETTER}'’ʼ])(?:${vs.map((v) => variantPattern(v, e.caps)).join("|")})(?![${LETTER}])`, "gu") : null);
+  }
+  const re = compiled.get(key)!;
+  if (re) re.lastIndex = 0;
+  return re;
 }
 
 const applies = (e: DictEntry, interview: string) => e.scope === "all" || e.scope === interview;

@@ -137,7 +137,8 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
 
   /** Every change: recompute replaced texts, show at once, save in order. */
   function commit(s: Shared, p: Private) {
-    const rebuilt = rebuild(s, p);
+    // Texts with replacements depend only on the originals and the dictionary: skip the work otherwise.
+    const rebuilt = p === priv && s.interviews === shared.interviews ? s : rebuild(s, p);
     setShared(rebuilt); setPriv(p);
     saving.current = saving.current.then(() =>
       invoke("save_project", { id: props.id, data: rebuilt, private: p }).then(() => setError(""), (e) => setError(`Не вдалося зберегти: ${e}`)),
@@ -158,7 +159,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   const iv = shared.interviews.find((x) => x.id === sel);
   const allSuspects = useMemo(
     () => suspects(shared.interviews.flatMap((x) => (priv.originals[x.id] ?? []).map((r) => ({ id: x.id, segs: applyDict(r.text, priv.dict, x.id) }))), priv.ignored),
-    [shared, priv],
+    [shared.interviews, priv],
   );
   const flagged = new Set(allSuspects.filter((s) => !iv || s.interviews.includes(iv.id)).map((s) => s.key));
   const ivSuspects = allSuspects.filter((s) => iv && s.interviews.includes(iv.id));

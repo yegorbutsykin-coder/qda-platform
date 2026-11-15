@@ -40,6 +40,13 @@ jobs:
       - run: npm ci
       # Encryption tests must pass before any installer is built.
       # (the window is built first: the engine embeds it even in tests)
+      # Known vulnerabilities in libraries (Linux-only GTK warnings are not used on Mac/Windows).
+      - uses: taiki-e/install-action@cargo-audit
+        if: matrix.name == 'macOS'
+      - run: cargo audit --file src-tauri/Cargo.lock
+        if: matrix.name == 'macOS'
+      - run: npm audit --omit=dev
+        if: matrix.name == 'macOS'
       - run: npm test
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml

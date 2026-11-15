@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Main window: no file or system access yet",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

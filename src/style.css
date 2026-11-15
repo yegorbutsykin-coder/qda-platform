@@ -1,0 +1,15 @@
+/* shortcut: system fonts until step 1.1 bundles Inter and IBM Plex Mono locally */
+:root {
+  --bg: #f6f3ec;
+  --ink: #1d1c1a;
+  --muted: #7a766d;
+  --line: #d9d4c8;
+  --accent: #e8590c;
+  font-family: Inter, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+}
+body { margin: 0; }
+main { padding: 48px; }
+h1 { font-weight: 500; font-size: 22px; margin: 0 0 8px; }
+.mono { font-family: "IBM Plex Mono", Menlo, Consolas, monospace; color: var(--muted); font-size: 13px; }

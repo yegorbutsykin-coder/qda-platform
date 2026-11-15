@@ -3,7 +3,39 @@
 // either view. Pure functions: tested in coding.test.ts.
 import type { Segment } from "./text";
 
-export type Code = { id: string; name: string; color: string; by: string; at: number; note?: string };
+export type Code = { id: string; name: string; color: string; by: string; at: number; note?: string; cat?: string };
+export type Cat = { id: string; name: string; color: string; sup?: string };
+export type Super = { id: string; name: string; desc: string };
+export type Levels = { top: string; mid: string };
+
+/** Names of the two upper levels by method; editable in the project. */
+export const LEVELS: Record<string, Levels> = {
+  "ІФА": { top: "Групова досвідна тема", mid: "Підтема" },
+  "РТА": { top: "Загальна тема", mid: "Тема" },
+  "Дескр.": { top: "Складник структури", mid: "Аспект" },
+  "": { top: "Супертема", mid: "Тема" },
+};
+export const CAT_COLORS = ["#2E5E8C", "#B3401A", "#3D7A3A", "#7A4A9A", "#A87900", "#2F7F7F"];
+
+/**
+ * Merges codes into `keep` (renamed to `name`): every application moves over; one person's
+ * overlapping pieces of the merged code on the same replica become one; notes are joined.
+ */
+export function mergeCodes(codes: Code[], apps: App[], ids: string[], keep: string, name: string): { codes: Code[]; apps: App[] } {
+  const gone = new Set(ids.filter((id) => id !== keep));
+  const notes = codes.filter((c) => ids.includes(c.id) && c.note?.trim()).map((c) => c.note!.trim());
+  const nextCodes = codes.filter((c) => !gone.has(c.id)).map((c) => (c.id === keep ? { ...c, name, note: notes.join("\n\n") || undefined } : c));
+  const moved = apps.map((a) => (gone.has(a.code) ? { ...a, code: keep } : a));
+  const others = moved.filter((a) => a.code !== keep);
+  const mine = moved.filter((a) => a.code === keep).sort((a, b) => a.iv.localeCompare(b.iv) || a.rep - b.rep || a.by.localeCompare(b.by) || a.s - b.s);
+  const out: App[] = [];
+  for (const a of mine) {
+    const last = out[out.length - 1];
+    if (last && last.iv === a.iv && last.rep === a.rep && last.by === a.by && a.s <= last.e) last.e = Math.max(last.e, a.e);
+    else out.push({ ...a });
+  }
+  return { codes: nextCodes, apps: [...others, ...out] };
+}
 export type App = { id: string; code: string; iv: string; rep: number; s: number; e: number; by: string; at: number };
 export type Piece = { o: number; len: number; text: string; kind: "plain" | "repl" | "orig"; codes: string[] };
 

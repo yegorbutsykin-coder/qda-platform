@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labDistance, nextColor, pieces, quote, snap, statuses, type App } from "./coding";
+import { labDistance, mergeCodes, nextColor, pieces, quote, snap, statuses, type App, type Code } from "./coding";
 import { applyDict, type DictEntry } from "./text";
 
 const dict: DictEntry[] = [{ id: "d", kind: "person", from: ["Оксана"], to: "[ім'я]", scope: "all", caps: true }];
@@ -47,5 +47,21 @@ describe("colours", () => {
     expect(new Set(used).size).toBe(8);
     for (let i = 0; i < used.length; i++) for (let j = i + 1; j < used.length; j++) expect(labDistance(used[i], used[j])).toBeGreaterThan(15);
     expect(labDistance(used[0], "#FBFAF6")).toBeGreaterThan(40);
+  });
+});
+
+describe("merging codes", () => {
+  const code = (id: string, note?: string): Code => ({ id, name: id, color: "#000000", by: "ЄБ", at: 0, note, cat: id === "a" ? "cat1" : undefined });
+  it("moves every fragment, joins overlaps and notes", () => {
+    const apps: App[] = [
+      { ...app(0, 10, "a"), id: "1" }, { ...app(5, 20, "b"), id: "2" }, { ...app(40, 50, "b"), id: "3" },
+      { ...app(0, 10, "b"), id: "4", by: "ОК" }, { ...app(0, 5, "c"), id: "5" },
+    ];
+    const r = mergeCodes([code("a", "перша"), code("b", "друга"), code("c")], apps, ["a", "b"], "a", "Очікування");
+    expect(r.codes.map((c) => [c.id, c.name, c.cat])).toEqual([["a", "Очікування", "cat1"], ["c", "c", undefined]]);
+    expect(r.codes[0].note).toBe("перша\n\nдруга");
+    const merged = r.apps.filter((x) => x.code === "a").map((x) => [x.by, x.s, x.e]);
+    expect(merged).toEqual([["ЄБ", 0, 20], ["ЄБ", 40, 50], ["ОК", 0, 10]]);
+    expect(r.apps.filter((x) => x.code === "c")).toHaveLength(1);
   });
 });

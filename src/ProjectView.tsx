@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { applyDict, guessRole, parseTranscript, suspects, type Role } from "./text";
 import CodingSheet, { type CodingActions } from "./CodingSheet";
 import Codebook from "./Codebook";
+import CodesPanel from "./CodesPanel";
 import { nextColor, quote, statuses, type Code } from "./coding";
 import { applyDict as segsFor } from "./text";
 import { emptyPrivate, emptyShared, GENDERS, newId, noteKey, pad, rebuild, speaker, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
@@ -113,6 +114,8 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags">("main");
   const [focus, setFocus] = useState<string | null>(null);
   const [underlines, setUnderlines] = useState(true);
+  const [leftTab, setLeftTab] = useState<"iv" | "codes">("iv");
+  const [byCat, setByCat] = useState(false);
   const [target, setTarget] = useState<number | null>(null);
   const [sel, setSel] = useState<string>("");
   const [original, setOriginal] = useState(false);
@@ -292,9 +295,13 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
             </div>
           ) : (
             <div className="split">
-              <nav className="ivlist" aria-label="Інтерв'ю">
-                <span className="label">Інтерв'ю · {shared.interviews.length}</span>
-                {shared.interviews.map((x) => (
+              <nav className="ivlist" aria-label="Панель проєкту">
+                <div className="seg" role="tablist" style={{ alignSelf: "stretch", marginBottom: 10 }}>
+                  <button role="tab" aria-selected={leftTab === "iv"} aria-pressed={leftTab === "iv"} onClick={() => setLeftTab("iv")} style={{ flex: 1 }}>Інтерв'ю · {shared.interviews.length}</button>
+                  <button role="tab" aria-selected={leftTab === "codes"} aria-pressed={leftTab === "codes"} onClick={() => setLeftTab("codes")} style={{ flex: 1 }}>Кодування</button>
+                </div>
+                {leftTab === "codes" && <CodesPanel shared={shared} priv={priv} method={meta.method} commit={commit} undoable={undoable} showFragments={(id) => { setFocus(id); setView("frags"); }} />}
+                {leftTab === "iv" && shared.interviews.map((x) => (
                   <button key={x.id} className={"ivrow" + (x.id === sel ? " on" : "")} aria-current={x.id === sel} onClick={() => setSel(x.id)}>
                     <span className="mono">{pad(x.n)}</span><span className="grow">{x.card.pseudonym}</span><span className={"stdot " + status[x.id]} title={STATUS[status[x.id]]} aria-label={STATUS[status[x.id]]} />
                   </button>
@@ -317,6 +324,10 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                       <button aria-pressed={original} onClick={() => setOriginal(true)}>Оригінал</button>
                     </div>
                     <span className="small grow">{original ? "Справжні слова бачите лише ви." : "Так текст бачитимуть колеги й супервайзер(ка)."}</span>
+                    <div className="seg" role="group" aria-label="Колір підкреслень">
+                      <button aria-pressed={!byCat} onClick={() => setByCat(false)}>Мікрокоди</button>
+                      <button aria-pressed={byCat} onClick={() => setByCat(true)}>Категорії</button>
+                    </div>
                     <label className="check" style={{ fontSize: 12 }}><input type="checkbox" checked={underlines} onChange={(e) => setUnderlines(e.target.checked)} /><span>Підкреслення</span></label>
                   </div>
                   {ivSuspects.length > 0 && (
@@ -326,7 +337,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                   {focus && fragCode && (
                     <div className="warnline" style={{ borderStyle: "solid", borderColor: fragCode.color }}>Показано лише код «{fragCode.name}». <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={() => setFocus(null)}>Показати всі</button></div>
                   )}
-                  <CodingSheet iv={iv} priv={priv} codes={shared.codes} apps={shared.apps} notes={shared.notes} me={me} original={original}
+                  <CodingSheet iv={iv} priv={priv} codes={byCat ? shared.codes.map((c) => ({ ...c, color: shared.cats.find((k) => k.id === c.cat)?.color ?? c.color })) : shared.codes} apps={shared.apps} notes={shared.notes} me={me} original={original}
                     underlines={underlines} focus={focus} flagged={flagged} act={act} target={target} />
                   <div className="legend small">
                     <span><mark className="repl">[ім'я]</mark> замінено за словником</span>
@@ -412,7 +423,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
         </section>
       )}
 
-      {view === "main" && shared.interviews.length > 0 && (
+      {view === "main" && leftTab === "iv" && shared.interviews.length > 0 && (
         <Codebook codes={shared.codes} apps={shared.apps} focus={focus} setFocus={setFocus}
           rename={(id, name) => patchCode(id, { name })} recolor={(id, color) => patchCode(id, { color })}
           setNote={(id, note) => patchCode(id, { note })} remove={removeCode} showFragments={(id) => { setFocus(id); setView("frags"); }} />

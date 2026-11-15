@@ -40,7 +40,7 @@ jobs:
         with:
           path: src-tauri/binaries
           key: whisper-v1.9.5-${{ matrix.os }}-4
-      - name: Build whisper-cli (Mac: Apple Silicon with Metal + Intel with AVX2, joined into one file)
+      - name: "Build whisper-cli (Mac: Apple Silicon with Metal + Intel with AVX2, joined into one file)"
         if: matrix.name == 'macOS' && steps.whisper.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --branch v1.9.5 https://github.com/ggml-org/whisper.cpp ../wcpp

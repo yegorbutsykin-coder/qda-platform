@@ -175,12 +175,14 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
 
   // ----- transcription -----
   type ModelState = { id: string; label: string; mib: number; downloaded: boolean; download: { state: string; pct: number; error?: string } | null };
-  type TxStatus = { state: string; pct: number; error?: string; segments?: TxSegment[] } | null;
+  type TxStatus = { state: string; pct: number; error?: string; segments?: TxSegment[]; stage: string; detail: string } | null;
   const [models, setModels] = useState<ModelState[]>([]);
   const [model, setModel] = useState("");
   const [lang, setLang] = useState("auto");
   const [audioFile, setAudioFile] = useState("");
   const [txPct, setTxPct] = useState<Record<string, number>>({});
+  const [txInfo, setTxInfo] = useState<Record<string, { stage: string; detail: string; since: number }>>({});
+  const [, setTick] = useState(0);
   const latest = useRef({ shared, priv });
   latest.current = { shared, priv };
   const loadModels = () => invoke<ModelState[]>("models_list").then((ms) => {
@@ -201,7 +203,11 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
         const ivx = latest.current.shared.interviews.find((x) => x.id === id);
         if (!ivx?.tx) continue;
         if (!st) setTx(id, { ...ivx.tx, state: "interrupted" });
-        else if (st.state === "running") setTxPct((m) => ({ ...m, [id]: st.pct }));
+        else if (st.state === "running") {
+          setTxPct((m) => ({ ...m, [id]: st.pct }));
+          setTxInfo((m) => ({ ...m, [id]: { stage: st.stage, detail: st.detail, since: m[id]?.since ?? Date.now() } }));
+          setTick((n) => n + 1);
+        }
         else if (st.state === "done") {
           setTx(id, undefined, segmentsToReplicas(st.segments ?? []).map((r) => ({ ...r, role: null })));
           notify(`Транскрипцію інтерв'ю ${pad(ivx.n)} · ${ivx.card.pseudonym} завершено.`);
@@ -221,6 +227,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
     try {
       await invoke("start_transcription", { job: id, path, model: m, language: l });
       setTxPct((x) => ({ ...x, [id]: 0 }));
+      setTxInfo((m) => ({ ...m, [id]: { stage: "convert", detail: "", since: Date.now() } }));
       return true;
     } catch (e) {
       setError(String(e) === "no_model" ? "Модель ще не завантажено." : `Не вдалося почати транскрипцію: ${e}`);
@@ -234,7 +241,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   const txError = (e?: string) =>
     !e ? "" : e.startsWith("no_network") ? "Немає з'єднання з інтернетом." : e === "bad_checksum" ? "Завантажений файл не збігся з контрольною сумою — його видалено; спробуйте ще раз."
       : e === "no_whisper" ? "У програмі бракує модуля транскрипції — перевстановіть програму." : e === "format_windows" ? "На Windows поки що підтримуються лише wav, mp3, ogg, flac."
-      : e.startsWith("convert") ? "Не вдалося прочитати аудіофайл." : e;
+      : e.startsWith("convert") ? "Не вдалося прочитати аудіофайл." : e === "cancelled" ? "Зупинено." : e;
 
   // ----- add interview -----
   const [file, setFile] = useState("");
@@ -495,7 +502,13 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                         <>
                           <span style={{ fontWeight: 500 }}>Транскрибується на цьому комп'ютері… {txPct[iv.id] ?? 0}%</span>
                           <div className="txbar" aria-hidden="true"><div style={{ width: `${txPct[iv.id] ?? 0}%` }} /></div>
+                          <span className="small">
+                            {({ convert: "1/3 · Перетворюю запис", load: "2/3 · Завантажую модель", recognize: "3/3 · Розпізнаю мовлення" } as Record<string, string>)[txInfo[iv.id]?.stage ?? "convert"] ?? "Готуюся"}
+                            {txInfo[iv.id] ? ` · минуло ${Math.round((Date.now() - txInfo[iv.id].since) / 1000)} с` : ""}
+                          </span>
+                          {txInfo[iv.id]?.detail && <span className="mono small" style={{ overflowWrap: "anywhere" }}>{txInfo[iv.id].detail}</span>}
                           <span className="small">Запис нікуди не надсилається. Тим часом можна працювати з іншими інтерв'ю. Якщо закрити програму, транскрипцію доведеться почати знову.</span>
+                          <button className="btn sm quiet" style={{ alignSelf: "flex-start" }} onClick={() => invoke("cancel_transcription", { job: iv.id })}>Зупинити</button>
                         </>
                       ) : (
                         <>

@@ -664,6 +664,11 @@ fn start_transcription(app: AppHandle, state: State<'_, AppState>, job: String, 
     Ok(())
 }
 
+#[tauri::command]
+fn cancel_transcription(state: State<'_, AppState>, job: String) {
+    transcribe::cancel(&state.jobs, &job);
+}
+
 /// None: no such job in this run of the program (e.g. it was closed meanwhile). Finished results are handed over once.
 #[tauri::command]
 fn transcription_status(state: State<'_, AppState>, job: String) -> Option<transcribe::Progress> {
@@ -712,7 +717,8 @@ fn main() {
             models_list,
             download_model,
             start_transcription,
-            transcription_status
+            transcription_status,
+            cancel_transcription
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

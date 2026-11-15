@@ -41,6 +41,10 @@ pub struct Progress {
     pub pct: u32,
     pub error: Option<String>,
     pub segments: Option<Vec<Segment>>,
+    /// "convert", "load", "recognize": what is happening now, for the window.
+    pub stage: String,
+    /// The last message of whisper-cli, to see where it stands.
+    pub detail: String,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -54,6 +58,20 @@ pub struct Segment {
 pub struct Jobs {
     pub downloads: Arc<Mutex<HashMap<String, Progress>>>,
     pub transcriptions: Arc<Mutex<HashMap<String, Progress>>>,
+    /// Process ids of running whisper-cli, to stop them.
+    pub pids: Arc<Mutex<HashMap<String, u32>>>,
+}
+
+/// Stops a running transcription.
+pub fn cancel(jobs: &Jobs, job: &str) {
+    set(&jobs.transcriptions, job, |p| p.error = Some("cancelled".into()));
+    if let Some(pid) = jobs.pids.lock().unwrap().remove(job) {
+        let _ = if cfg!(windows) {
+            Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).output()
+        } else {
+            Command::new("kill").arg(pid.to_string()).output()
+        };
+    }
 }
 
 fn set(map: &Arc<Mutex<HashMap<String, Progress>>>, key: &str, f: impl FnOnce(&mut Progress)) {
@@ -171,10 +189,14 @@ fn to_wav(input: &Path, wav: &Path) -> Result<(), String> {
 
 pub fn start(jobs: &Jobs, job: String, audio: PathBuf, model_file: PathBuf, language: String) {
     let map = jobs.transcriptions.clone();
-    set(&map, &job, |p| *p = Progress { state: "running".into(), ..Default::default() });
+    let pids = jobs.pids.clone();
+    set(&map, &job, |p| *p = Progress { state: "running".into(), stage: "convert".into(), ..Default::default() });
     thread::spawn(move || {
         let wav = std::env::temp_dir().join(format!("qda-{job}.wav"));
-        let result = run(&map, &job, &audio, &wav, &model_file, &language);
+        let result = run(&map, &pids, &job, &audio, &wav, &model_file, &language);
+        pids.lock().unwrap().remove(&job);
+        let cancelled = map.lock().unwrap().get(&job).and_then(|p| p.error.clone()).as_deref() == Some("cancelled");
+        let result = if cancelled { Err("cancelled".to_string()) } else { result };
         let _ = fs::remove_file(&wav); // the temporary copy of the audio never stays behind
         match result {
             Ok(segments) => set(&map, &job, |p| { p.state = "done".into(); p.pct = 100; p.segments = Some(segments); }),
@@ -183,13 +205,25 @@ pub fn start(jobs: &Jobs, job: String, audio: PathBuf, model_file: PathBuf, lang
     });
 }
 
-fn run(map: &Arc<Mutex<HashMap<String, Progress>>>, job: &str, audio: &Path, wav: &Path, model_file: &Path, language: &str) -> Result<Vec<Segment>, String> {
+type Pids = Arc<Mutex<HashMap<String, u32>>>;
+
+fn run(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, audio: &Path, wav: &Path, model_file: &Path, language: &str) -> Result<Vec<Segment>, String> {
     to_wav(audio, wav)?;
+    // 16 kHz, 16-bit mono: 32 bytes per millisecond after the 44-byte header.
+    let duration_ms = fs::metadata(wav).map(|m| m.len().saturating_sub(44) / 32).unwrap_or(0).max(1);
     // The graphics card makes it several times faster; if it fails on this computer, run on the processor.
-    whisper(map, job, wav, model_file, language, true).or_else(|_| whisper(map, job, wav, model_file, language, false))
+    whisper(map, pids, job, wav, model_file, language, true, duration_ms).or_else(|e| {
+        if e == "cancelled" || map.lock().unwrap().get(job).and_then(|p| p.error.clone()).is_some() {
+            return Err("cancelled".into());
+        }
+        set(map, job, |p| p.detail = format!("відеокарта не спрацювала, працюю процесором ({e})"));
+        whisper(map, pids, job, wav, model_file, language, false, duration_ms)
+    })
 }
 
-fn whisper(map: &Arc<Mutex<HashMap<String, Progress>>>, job: &str, wav: &Path, model_file: &Path, language: &str, gpu: bool) -> Result<Vec<Segment>, String> {
+#[allow(clippy::too_many_arguments)]
+fn whisper(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, wav: &Path, model_file: &Path, language: &str, gpu: bool, duration_ms: u64) -> Result<Vec<Segment>, String> {
+    set(map, job, |p| { p.stage = "load".into(); p.pct = 0; });
     let threads = thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
     let mut child = Command::new(whisper_cli()?)
         .arg("-m").arg(model_file)
@@ -200,14 +234,21 @@ fn whisper(map: &Arc<Mutex<HashMap<String, Progress>>>, job: &str, wav: &Path, m
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
+    pids.lock().unwrap().insert(job.to_string(), child.id());
     let stderr = child.stderr.take().unwrap();
     let progress_map = map.clone();
     let job_id = job.to_string();
     let err_reader = thread::spawn(move || {
         let mut tail = Vec::new();
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if let Some(v) = line.split("progress =").nth(1).and_then(|v| v.trim().trim_end_matches('%').trim().parse::<u32>().ok()) {
-                set(&progress_map, &job_id, |p| p.pct = v.min(99));
+            let line = line.trim().to_string();
+            if !line.is_empty() {
+                set(&progress_map, &job_id, |p| {
+                    if line.contains("progress =") || line.contains("processing") {
+                        p.stage = "recognize".into();
+                    }
+                    p.detail = line.chars().take(160).collect();
+                });
             }
             tail.push(line);
             if tail.len() > 20 {
@@ -216,7 +257,15 @@ fn whisper(map: &Arc<Mutex<HashMap<String, Progress>>>, job: &str, wav: &Path, m
         }
         tail.join("\n")
     });
-    let segments: Vec<Segment> = BufReader::new(child.stdout.take().unwrap()).lines().map_while(Result::ok).filter_map(|l| parse_line(&l)).collect();
+    let mut segments = Vec::new();
+    for line in BufReader::new(child.stdout.take().unwrap()).lines().map_while(Result::ok) {
+        if let Some(seg) = parse_line(&line) {
+            // Progress = how far into the recording the recognised text has reached.
+            let pct = (seg.end_ms * 100 / duration_ms).min(99) as u32;
+            set(map, job, |p| { p.stage = "recognize".into(); p.pct = p.pct.max(pct); });
+            segments.push(seg);
+        }
+    }
     let status = child.wait().map_err(|e| e.to_string())?;
     let tail = err_reader.join().unwrap_or_default();
     if !status.success() {
@@ -244,5 +293,34 @@ mod tests {
     fn model_list_is_consistent() {
         assert!(MODELS.iter().all(|m| m.sha1.len() == 40 && model(m.id).is_some()));
         assert!(model("../../etc").is_none());
+    }
+}
+
+/// Runs the real pipeline with a locally built whisper-cli; `QDA_WHISPER_TEST=dir` holds
+/// whisper-cli, a model and a WAV. Not part of the normal test run.
+#[cfg(test)]
+mod pipeline {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn whole_pipeline_finishes() {
+        let dir = PathBuf::from(std::env::var("QDA_WHISPER_TEST").unwrap());
+        let exe_dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        fs::copy(dir.join("whisper-cli"), exe_dir.join("whisper-cli")).unwrap();
+        let jobs = Jobs::default();
+        start(&jobs, "t1".into(), dir.join("jfk.wav"), dir.join("model.bin"), "auto".into());
+        let mut seen = Vec::new();
+        for _ in 0..240 {
+            let p = jobs.transcriptions.lock().unwrap().get("t1").cloned().unwrap();
+            seen.push(format!("{} {} {}", p.stage, p.pct, p.detail));
+            if p.state != "running" {
+                println!("{}", seen.join("\n"));
+                assert_eq!(p.state, "done", "error: {:?}", p.error);
+                return;
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+        panic!("still running: {}", seen.last().unwrap());
     }
 }

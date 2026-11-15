@@ -53,7 +53,7 @@ function Choice(props: { on: boolean; onClick: () => void; children: ReactNode; 
   );
 }
 
-export default function Projects(props: { aside: ReactNode; msg: string; setMsg: (m: string) => void }) {
+export default function Projects(props: { me: string; aside: ReactNode; msg: string; setMsg: (m: string) => void }) {
   const { msg, setMsg } = props;
   const [view, setView] = useState<View>("list");
   const [list, setList] = useState<Entry[]>([]);
@@ -360,7 +360,7 @@ export default function Projects(props: { aside: ReactNode; msg: string; setMsg:
         </section>
       )}
 
-      {view === "opened" && opened && <ProjectView id={opened} onBack={() => { refresh(); go("list"); }} />}
+      {view === "opened" && opened && <ProjectView id={opened} me={props.me} onBack={() => { refresh(); go("list"); }} />}
 
       {view === "backup" && target && (
         <section className="card wide" aria-label="Резервна копія">

@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { applyDict, guessRole, parseTranscript, suspects, type Role } from "./text";
-import { Transcript } from "./Transcript";
-import { emptyPrivate, emptyShared, GENDERS, newId, pad, rebuild, speaker, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
+import CodingSheet, { type CodingActions } from "./Coding";
+import Codebook from "./Codebook";
+import { nextColor, quote, statuses, type Code } from "./coding";
+import { applyDict as segsFor } from "./text";
+import { emptyPrivate, emptyShared, GENDERS, newId, noteKey, pad, rebuild, speaker, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
 import Dictionary from "./Dictionary";
 
 type Meta = { name: string; method: string; student: { work: string; supervisor: string } | null };
@@ -102,12 +105,15 @@ function CardForm(props: {
 
 // ---------- the project ----------
 
-export default function ProjectView(props: { id: string; onBack: () => void }) {
+export default function ProjectView(props: { id: string; me: string; onBack: () => void }) {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [shared, setShared] = useState<Shared>(emptyShared());
   const [priv, setPriv] = useState<Private>(emptyPrivate());
   const [error, setError] = useState("");
-  const [view, setView] = useState<"main" | "add" | "card" | "dict">("main");
+  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags">("main");
+  const [focus, setFocus] = useState<string | null>(null);
+  const [underlines, setUnderlines] = useState(true);
+  const [target, setTarget] = useState<number | null>(null);
   const [sel, setSel] = useState<string>("");
   const [original, setOriginal] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
@@ -210,9 +216,45 @@ export default function ProjectView(props: { id: string; onBack: () => void }) {
   const removeInterview = () => {
     const rest = Object.fromEntries(Object.entries(priv.originals).filter(([k]) => k !== iv!.id));
     const next = shared.interviews.filter((x) => x.id !== iv!.id);
-    undoable(`Інтерв'ю ${pad(iv!.n)} · ${iv!.card.pseudonym} видалено.`, { ...shared, interviews: next }, { ...priv, originals: rest, dict: priv.dict.filter((d) => d.scope !== iv!.id) });
+    const notes = Object.fromEntries(Object.entries(shared.notes).filter(([k]) => !k.startsWith(iv!.id + ":")));
+    undoable(`Інтерв'ю ${pad(iv!.n)} · ${iv!.card.pseudonym} видалено.`, { ...shared, interviews: next, apps: shared.apps.filter((a) => a.iv !== iv!.id), notes },
+      { ...priv, originals: rest, dict: priv.dict.filter((d) => d.scope !== iv!.id) });
     setSel(next[0]?.id ?? "");
   };
+
+  // ----- coding -----
+  const me = props.me;
+  const act: CodingActions = {
+    apply(code, rep, s, e) {
+      // The same code on an overlapping piece by the same person: widen it instead of doubling.
+      const same = shared.apps.filter((a) => a.code === code && a.iv === iv!.id && a.rep === rep && a.by === me && a.s <= e && a.e >= s);
+      const merged = { id: newId(), code, iv: iv!.id, rep, s: Math.min(s, ...same.map((a) => a.s)), e: Math.max(e, ...same.map((a) => a.e)), by: me, at: Date.now() };
+      commit({ ...shared, apps: [...shared.apps.filter((a) => !same.includes(a)), merged] }, priv);
+    },
+    create(name, rep, s, e) {
+      const code: Code = { id: newId(), name, color: nextColor(shared.codes.map((c) => c.color)), by: me, at: Date.now() };
+      commit({ ...shared, codes: [...shared.codes, code], apps: [...shared.apps, { id: newId(), code: code.id, iv: iv!.id, rep, s, e, by: me, at: Date.now() }] }, priv);
+      notify(`Новий код «${name}».`);
+    },
+    removeApps(ids) {
+      undoable(ids.length > 1 ? "Ваші коди з фрагмента прибрано." : "Код із фрагмента прибрано.", { ...shared, apps: shared.apps.filter((a) => !ids.includes(a.id)) }, priv);
+    },
+    setNote(rep, text) {
+      const notes = { ...shared.notes };
+      if (text.trim()) notes[noteKey(iv!.id, rep)] = { text, by: me, at: Date.now() };
+      else delete notes[noteKey(iv!.id, rep)];
+      commit({ ...shared, notes }, priv);
+    },
+  };
+  const patchCode = (id: string, patch: Partial<Code>) => commit({ ...shared, codes: shared.codes.map((c) => (c.id === id ? { ...c, ...patch } : c)) }, priv);
+  const removeCode = (c: Code) => {
+    setFocus(null);
+    undoable(`Код «${c.name}» і всі його позначки прибрано.`, { ...shared, codes: shared.codes.filter((x) => x.id !== c.id), apps: shared.apps.filter((a) => a.code !== c.id) }, priv);
+  };
+  const status = statuses(shared.interviews, shared.apps);
+  const STATUS = { none: "не закодовано", new: "є нові коди", existing: "лише наявні коди" } as const;
+  const fragCode = shared.codes.find((c) => c.id === focus);
+  const goContext = (ivId: string, rep: number) => { setSel(ivId); setTarget(rep); setView("main"); };
 
   if (!meta) return <section className="card wide">{error ? <span className="bad">{error}</span> : <span className="small">Відкриваю…</span>}</section>;
 
@@ -254,7 +296,7 @@ export default function ProjectView(props: { id: string; onBack: () => void }) {
                 <span className="label">Інтерв'ю · {shared.interviews.length}</span>
                 {shared.interviews.map((x) => (
                   <button key={x.id} className={"ivrow" + (x.id === sel ? " on" : "")} aria-current={x.id === sel} onClick={() => setSel(x.id)}>
-                    <span className="mono">{pad(x.n)}</span><span className="grow">{x.card.pseudonym}</span><span className="small">не закодовано</span>
+                    <span className="mono">{pad(x.n)}</span><span className="grow">{x.card.pseudonym}</span><span className={"stdot " + status[x.id]} title={STATUS[status[x.id]]} aria-label={STATUS[status[x.id]]} />
                   </button>
                 ))}
               </nav>
@@ -274,13 +316,18 @@ export default function ProjectView(props: { id: string; onBack: () => void }) {
                       <button aria-pressed={!original} onClick={() => setOriginal(false)}>Із замінами</button>
                       <button aria-pressed={original} onClick={() => setOriginal(true)}>Оригінал</button>
                     </div>
-                    <span className="small">{original ? "Справжні слова бачите лише ви." : "Так текст бачитимуть колеги й супервайзер(ка)."}</span>
+                    <span className="small grow">{original ? "Справжні слова бачите лише ви." : "Так текст бачитимуть колеги й супервайзер(ка)."}</span>
+                    <label className="check" style={{ fontSize: 12 }}><input type="checkbox" checked={underlines} onChange={(e) => setUnderlines(e.target.checked)} /><span>Підкреслення</span></label>
                   </div>
                   {ivSuspects.length > 0 && (
                     <div className="warnline">Ще не замінено: {ivSuspects.slice(0, 8).map((s) => `«${s.word}»`).join(", ")}{ivSuspects.length > 8 ? "…" : ""}. Колеги бачать ці слова як є.{" "}
                       <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={() => setView("dict")}>До словника замін →</button></div>
                   )}
-                  <Transcript iv={iv} priv={priv} original={original} flagged={flagged} />
+                  {focus && fragCode && (
+                    <div className="warnline" style={{ borderStyle: "solid", borderColor: fragCode.color }}>Показано лише код «{fragCode.name}». <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={() => setFocus(null)}>Показати всі</button></div>
+                  )}
+                  <CodingSheet iv={iv} priv={priv} codes={shared.codes} apps={shared.apps} notes={shared.notes} me={me} original={original}
+                    underlines={underlines} focus={focus} flagged={flagged} act={act} target={target} />
                   <div className="legend small">
                     <span><mark className="repl">[ім'я]</mark> замінено за словником</span>
                     <span><mark className="orig">Оксана</mark> справжнє слово (лише в «Оригіналі»)</span>
@@ -362,6 +409,39 @@ export default function ProjectView(props: { id: string; onBack: () => void }) {
             <div className="grow" />
             <button className="link" style={{ fontSize: 12, color: "var(--bad)" }} onClick={() => { setView("main"); removeInterview(); }}>Видалити інтерв'ю</button>
           </div>
+        </section>
+      )}
+
+      {view === "main" && shared.interviews.length > 0 && (
+        <Codebook codes={shared.codes} apps={shared.apps} focus={focus} setFocus={setFocus}
+          rename={(id, name) => patchCode(id, { name })} recolor={(id, color) => patchCode(id, { color })}
+          setNote={(id, note) => patchCode(id, { note })} remove={removeCode} showFragments={(id) => { setFocus(id); setView("frags"); }} />
+      )}
+
+      {view === "frags" && fragCode && (
+        <section className="stack" style={{ gap: 14, maxWidth: 920 }} aria-label={`Фрагменти коду ${fragCode.name}`}>
+          <div className="row">
+            <span className="sw lg" style={{ background: fragCode.color }} aria-hidden="true" />
+            <span className="title grow">{fragCode.name}</span>
+            <button className="btn sm" onClick={() => setView("main")}>← До транскрипту</button>
+          </div>
+          {fragCode.note && <div className="panel"><span className="label">Попередня інтерпретація</span><p className="mono" style={{ fontSize: 13, lineHeight: 1.7 }}>{fragCode.note}</p></div>}
+          {shared.interviews.flatMap((x) => shared.apps.filter((a) => a.code === fragCode.id && a.iv === x.id).sort((a, b) => a.rep - b.rep || a.s - b.s).map((a) => {
+            const r = priv.originals[x.id]?.[a.rep];
+            if (!r) return null;
+            return (
+              <div className="frag" key={a.id}>
+                <div className="stack" style={{ gap: 3, flex: "0 0 150px" }}>
+                  <span className="mono" style={{ fontSize: 13, fontWeight: 500 }}>{pad(x.n)} · {x.card.pseudonym}</span>
+                  <span className="mono small">{r.t ?? ""}</span>
+                  <span className="small">{a.by}</span>
+                </div>
+                <p className="mono grow" style={{ fontSize: 14, lineHeight: 1.8, minWidth: 0 }}>«{quote(segsFor(r.text, priv.dict, x.id), a.s, a.e)}»</p>
+                <button className="btn sm quiet" style={{ alignSelf: "flex-start" }} onClick={() => goContext(x.id, a.rep)}>У контексті →</button>
+              </div>
+            );
+          }))}
+          {!shared.apps.some((a) => a.code === fragCode.id) && <span className="small">Фрагментів із цим кодом немає.</span>}
         </section>
       )}
 

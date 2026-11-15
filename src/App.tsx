@@ -455,7 +455,7 @@ export default function App() {
           )}
 
           {screen === "projects" && me && (
-            <Projects key={me.id} msg={msg} setMsg={setMsg} aside={
+            <Projects key={me.id} me={me.initials} msg={msg} setMsg={setMsg} aside={
                 <aside aria-label="Профіль">
                   <span className="label">Профіль</span>
                   <div className="kv"><span>Ініціали</span><span className="mono">{me.initials}</span></div>

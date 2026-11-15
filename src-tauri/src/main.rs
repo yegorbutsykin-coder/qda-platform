@@ -161,6 +161,29 @@ async fn unlock(app: AppHandle, state: State<'_, AppState>, id: String, password
     }
 }
 
+/// Removes a profile from this computer; needs its password. Project files stay where they are.
+#[tauri::command]
+async fn delete_profile(app: AppHandle, state: State<'_, AppState>, id: String, password: String) -> Res<()> {
+    let d = dir(&app)?;
+    let mut p = vault::load(&d, &id).map_err(io)?;
+    let wait = p.wait_secs(now());
+    if wait > 0 {
+        return Err(format!("wait:{wait}"));
+    }
+    if p.unlock(&password).is_none() {
+        p.register_failure(now());
+        vault::save(&d, &p).map_err(io)?;
+        let wait = p.wait_secs(now());
+        return Err(if wait > 0 { format!("wait:{wait}") } else { "wrong".into() });
+    }
+    vault::delete(&d, &id).map_err(io)?;
+    let mut session = state.session.lock().unwrap();
+    if session.as_ref().is_some_and(|s| s.id == id) {
+        *session = None;
+    }
+    Ok(())
+}
+
 fn recovery_err(e: RecoveryError) -> String {
     match e {
         RecoveryError::BadWords => "bad_words".into(),
@@ -572,6 +595,7 @@ fn main() {
             change_password,
             set_autolock,
             lock,
+            delete_profile,
             disk_encryption,
             open_disk_settings,
             print_page,

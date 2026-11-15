@@ -2633,7 +2633,7 @@ dependencies = [
 
 [[package]]
 name = "qda-platform"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "argon2",
  "base64 0.22.1",

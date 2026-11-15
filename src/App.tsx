@@ -5,7 +5,7 @@ import Projects from "./Projects";
 type Profile = { id: string; name: string; initials: string; autolock_min: number };
 type Screen =
   | "loading" | "welcome" | "you" | "pass" | "key" | "keycheck" | "disk"
-  | "login" | "recover" | "recoverPass" | "locked" | "projects" | "changePass";
+  | "login" | "recover" | "recoverPass" | "locked" | "projects" | "changePass" | "deleteProfile";
 
 const MIN = 10;
 const SETUP_STEPS = ["1 · Ви", "2 · Пароль", "3 · Ключ відновлення", "4 · Захист диска"];
@@ -72,6 +72,7 @@ export default function App() {
   const [wrong, setWrong] = useState(false);
   const [phrase, setPhrase] = useState("");
   const [cur, setCur] = useState("");
+  const [delPw, setDelPw] = useState("");
   const [, tick] = useState(0);
 
   const go = (s: Screen) => { setError(""); setScreen(s); };
@@ -158,6 +159,22 @@ export default function App() {
     } catch (e) {
       const s = err(e);
       setLpw("");
+      if (s.startsWith("wait:")) { setWaitUntil(Date.now() + Number(s.slice(5)) * 1000); setWrong(false); }
+      else if (s === "wrong") setWrong(true);
+      else throw e;
+    }
+  });
+  const deleteProfile = () => run(async () => {
+    try {
+      await invoke("delete_profile", { id: sel, password: delPw });
+      const name = selected?.name;
+      setDelPw(""); setWrong(false); setMe(null);
+      const ps = await refresh();
+      if (ps.length) { setSel(ps[0].id); go("login"); setError(""); } else go("welcome");
+      setMsg(`Профіль «${name}» видалено з цього комп'ютера.`);
+    } catch (e) {
+      const s = err(e);
+      setDelPw("");
       if (s.startsWith("wait:")) { setWaitUntil(Date.now() + Number(s.slice(5)) * 1000); setWrong(false); }
       else if (s === "wrong") setWrong(true);
       else throw e;
@@ -372,6 +389,7 @@ export default function App() {
 
           {screen === "login" && (
             <section className="login" aria-label="Вхід">
+              {msg && <div className="msg" role="status"><span className="grow">{msg}</span><button className="link" style={{ minHeight: 32 }} onClick={() => setMsg("")} aria-label="Закрити повідомлення">✕</button></div>}
               <h1 style={{ fontSize: 22 }}>Хто працює?</h1>
               <div className="tiles" role="radiogroup" aria-label="Профіль">
                 {profiles.map((p) => (
@@ -392,9 +410,34 @@ export default function App() {
                   <button type="button" className="link" onClick={() => { setPhrase(""); go("recover"); }}>Забули пароль?</button>
                 </div>
               </Form>
-              <button className="link" style={{ alignSelf: "flex-start" }} onClick={() => go("welcome")}>+ Новий профіль на цьому комп'ютері</button>
+              <div className="row" style={{ gap: "4px 20px" }}>
+                <button className="link" onClick={() => go("welcome")}>+ Новий профіль на цьому комп'ютері</button>
+                <button className="link" style={{ color: "var(--muted)" }} onClick={() => { setDelPw(""); setError(""); go("deleteProfile"); }}>Видалити профіль «{selected?.name}»…</button>
+              </div>
               <span className="small">Кожен профіль має свій пароль і бачить лише свої проєкти.</span>
             </section>
+          )}
+
+          {screen === "deleteProfile" && selected && (
+            <Form label="Видалити профіль" onSubmit={() => delPw && wait === 0 && !busy && deleteProfile()}>
+              <span className="label">Видалити профіль · {selected.name}</span>
+              <h2>Видалити профіль з цього комп'ютера?</h2>
+              <div className="stack" style={{ fontSize: 13, lineHeight: 1.6, gap: 8 }}>
+                <span>Зникне профіль «{selected.name}»: ім'я, ініціали, пароль і список проєктів на цьому комп'ютері.</span>
+                <span>Файли проєктів <b style={{ fontWeight: 600 }}>не видаляються</b>: вони лишаються в теці «Документи / QDA» та в резервних копіях. Відкрити їх знову можна через «Відкрити резервну копію» паролем цього профілю або його 12 словами — тоді профіль відновиться.</span>
+                <span className="lead">Скасувати видалення профілю неможливо. Щоб підтвердити, що це ваш профіль, введіть його пароль.</span>
+              </div>
+              <label className="field">
+                <span>Пароль профілю «{selected.name}»</span>
+                <input className="input" type="password" autoComplete="current-password" autoFocus value={delPw} onChange={(e) => setDelPw(e.target.value)} />
+              </label>
+              <span className="bad" aria-live="polite">{loginError}</span>
+              {errorLine}
+              <div className="row">
+                <button type="button" className="btn quiet" onClick={() => { setWrong(false); go("login"); }}>Скасувати</button>
+                <button type="submit" className="btn danger" disabled={!delPw || wait > 0 || busy}>{busy ? "Перевіряю…" : "Видалити профіль"}</button>
+              </div>
+            </Form>
           )}
 
           {screen === "recover" && (

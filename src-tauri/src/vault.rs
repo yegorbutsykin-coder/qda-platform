@@ -277,6 +277,13 @@ pub fn load(dir: &Path, id: &str) -> io::Result<Profile> {
     serde_json::from_slice(&bytes).map_err(io::Error::other)
 }
 
+pub fn delete(dir: &Path, id: &str) -> io::Result<()> {
+    if !valid_id(id) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad profile id"));
+    }
+    fs::remove_file(dir.join(format!("{id}.json")))
+}
+
 /// Writes to a temporary file first, so a crash never leaves half a profile.
 pub fn save(dir: &Path, p: &Profile) -> io::Result<()> {
     fs::create_dir_all(dir)?;
@@ -359,6 +366,9 @@ mod tests {
         assert_eq!(*q.unlock("зелений чайник читає").unwrap(), *master);
         assert_eq!(load_all(&dir).len(), 1);
         assert!(load(&dir, "../etc/passwd").is_err());
+        assert!(delete(&dir, "../etc/passwd").is_err());
+        delete(&dir, &p.id).unwrap();
+        assert!(load_all(&dir).is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 }

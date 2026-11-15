@@ -40,6 +40,7 @@ jobs:
       - run: npm ci
       # Encryption tests must pass before any installer is built.
       # (the window is built first: the engine embeds it even in tests)
+      - run: npm test
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: npx tauri build ${{ matrix.args }}

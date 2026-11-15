@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod project;
+mod textfile;
 mod vault;
 
 use serde::Serialize;
@@ -354,7 +355,7 @@ async fn create_project(
     };
     std::fs::create_dir_all(&d).map_err(io)?;
     let t = now();
-    let content = Content { name: name.clone(), method, student, created: t, modified: t };
+    let content = Content { name: name.clone(), method, student, created: t, modified: t, data: serde_json::Value::Null };
     with_profile(&app, &state, |p, master| {
         let (f, halves) = ProjectFile::create(p, master, &content);
         let path = project::free_path(&d, &project::file_stem(&name), "qda");
@@ -385,16 +386,6 @@ fn forget_supervisor_half(state: State<'_, AppState>) {
 
 fn find(p: &Profile, master: &Key, id: &str) -> Res<Entry> {
     project::entries(p, master).into_iter().find(|e| e.id == id).ok_or_else(|| "not_found".into())
-}
-
-#[tauri::command]
-async fn open_project(app: AppHandle, state: State<'_, AppState>, id: String) -> Res<Content> {
-    with_profile(&app, &state, |p, master| {
-        let e = find(p, master, &id)?;
-        let f = ProjectFile::read(std::path::Path::new(&e.path)).map_err(|_| format!("missing:{}", e.path))?;
-        let pk = f.project_key(master).ok_or("wrong")?;
-        f.content(&pk).ok_or_else(|| "not_a_project".into())
-    })
 }
 
 #[tauri::command]
@@ -483,6 +474,7 @@ async fn restore_mine(app: AppHandle, state: State<'_, AppState>, path: String, 
                 let mut g = f.duplicate(p, master, &c2);
                 let pk2 = g.project_key(master).ok_or("wrong")?;
                 g.set_content(&pk2, &c2);
+                g.set_private(&pk2, &f.private(&pk).ok_or("not_a_project")?);
                 add_copy(&app, p, master, g, &pk2)
             }
             (_, None) => add_copy(&app, p, master, f.clone(), &pk),
@@ -520,6 +512,51 @@ async fn restore_halves(app: AppHandle, state: State<'_, AppState>, path: String
     with_profile(&app, &state, |p, master| add_copy(&app, p, master, f.clone(), &pk))
 }
 
+// ---------- interviews (step 1.3) ----------
+
+#[tauri::command]
+async fn read_transcript(path: String) -> Res<String> {
+    textfile::read(std::path::Path::new(&path))
+}
+
+#[derive(Serialize)]
+struct Loaded {
+    content: Content,
+    private: serde_json::Value,
+}
+
+#[tauri::command]
+async fn load_project(app: AppHandle, state: State<'_, AppState>, id: String) -> Res<Loaded> {
+    with_profile(&app, &state, |p, master| {
+        let e = find(p, master, &id)?;
+        let f = ProjectFile::read(std::path::Path::new(&e.path)).map_err(|_| format!("missing:{}", e.path))?;
+        let pk = f.project_key(master).ok_or("wrong")?;
+        Ok(Loaded { content: f.content(&pk).ok_or("not_a_project")?, private: f.private(&pk).ok_or("not_a_project")? })
+    })
+}
+
+/// Saves the window's data: `data` (shared part) and `private` (originals, dictionary). Returns the save time.
+#[tauri::command]
+async fn save_project(app: AppHandle, state: State<'_, AppState>, id: String, data: serde_json::Value, private: serde_json::Value) -> Res<u64> {
+    with_profile(&app, &state, |p, master| {
+        let mut list = project::entries(p, master);
+        let e = list.iter_mut().find(|e| e.id == id).ok_or("not_found")?;
+        let path = PathBuf::from(&e.path);
+        let mut f = ProjectFile::read(&path).map_err(|_| format!("missing:{}", e.path))?;
+        let pk = f.project_key(master).ok_or("wrong")?;
+        let mut c = f.content(&pk).ok_or("not_a_project")?;
+        c.data = data;
+        c.modified = now();
+        f.set_content(&pk, &c);
+        f.set_private(&pk, &private);
+        f.refresh_owner(p);
+        f.write(&path).map_err(io)?;
+        e.modified = c.modified;
+        project::set_entries(p, master, &list);
+        Ok(c.modified)
+    })
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -543,12 +580,14 @@ fn main() {
             create_project,
             save_supervisor_half,
             forget_supervisor_half,
-            open_project,
             backup_project,
             inspect_backup,
             restore_mine,
             restore_foreign,
-            restore_halves
+            restore_halves,
+            read_transcript,
+            load_project,
+            save_project
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

@@ -27,6 +27,10 @@ pub struct ProjectFile {
     #[serde(default)]
     pk_by_halves: Option<Sealed>,
     content: Blob,
+    /// Owner-only part: original transcripts and the replacement dictionary.
+    /// Never goes into packages for colleagues (step 3); here it shares the project key.
+    #[serde(default)]
+    private: Option<Blob>,
 }
 
 /// What is inside the encrypted part. Later steps add interviews, codes, text.
@@ -38,6 +42,9 @@ pub struct Content {
     pub student: Option<Student>,
     pub created: u64,
     pub modified: u64,
+    /// Interviews (text with replacements), participant cards, project fields. Shaped by the window.
+    #[serde(default)]
+    pub data: serde_json::Value,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -81,6 +88,9 @@ fn aad_pk(p: &str, owner: &str) -> String {
 fn aad_content(p: &str) -> String {
     format!("qda:{p}:content")
 }
+fn aad_private(p: &str) -> String {
+    format!("qda:{p}:private")
+}
 fn aad_halves(p: &str) -> String {
     format!("qda:{p}:halves")
 }
@@ -112,6 +122,7 @@ impl ProjectFile {
             pk_by_master: vault::lock(master, &aad_pk(&id, &owner.id), pk.as_ref()),
             content: vault::lock(&pk, &aad_content(&id), &serde_json::to_vec(content).unwrap()),
             pk_by_halves,
+            private: None,
             owner: owner.owner(),
             id,
         };
@@ -136,6 +147,17 @@ impl ProjectFile {
 
     pub fn set_content(&mut self, pk: &Key, c: &Content) {
         self.content = vault::lock(pk, &aad_content(&self.id), &serde_json::to_vec(c).unwrap());
+    }
+
+    pub fn private(&self, pk: &Key) -> Option<serde_json::Value> {
+        match &self.private {
+            None => Some(serde_json::Value::Null),
+            Some(b) => serde_json::from_slice(&vault::unlock(pk, &aad_private(&self.id), b)?).ok(),
+        }
+    }
+
+    pub fn set_private(&mut self, pk: &Key, v: &serde_json::Value) {
+        self.private = Some(vault::lock(pk, &aad_private(&self.id), &serde_json::to_vec(v).unwrap()));
     }
 
     pub fn has_halves(&self) -> bool {
@@ -240,7 +262,26 @@ mod tests {
             student: student.then(|| Student { work: "курсова".into(), supervisor: "Єгор Б.".into() }),
             created: 1,
             modified: 1,
+            data: serde_json::json!({"interviews": [{"pseudonym": "Ліна"}]}),
         }
+    }
+
+    #[test]
+    fn private_part_round_trip_and_stays_encrypted() {
+        let d = tmp();
+        let (owner, master, _) = Profile::create(vault::new_id(), "Олена".into(), "ОК".into(), "довгий пароль тут", 1);
+        let (mut f, _) = ProjectFile::create(&owner, &master, &content(false));
+        let pk = f.project_key(&master).unwrap();
+        assert_eq!(f.private(&pk).unwrap(), serde_json::Value::Null);
+        let secret = serde_json::json!({"dict": [{"from": "Оксана", "to": "[ім'я]"}]});
+        f.set_private(&pk, &secret);
+        f.write(&d.join("p.qda")).unwrap();
+        let raw = fs::read_to_string(d.join("p.qda")).unwrap();
+        assert!(!raw.contains("Оксана") && !raw.contains("Ліна"));
+        let g = ProjectFile::read(&d.join("p.qda")).unwrap();
+        assert_eq!(g.private(&pk).unwrap(), secret);
+        assert_eq!(g.content(&pk).unwrap().data["interviews"][0]["pseudonym"], "Ліна");
+        fs::remove_dir_all(d).unwrap();
     }
 
     #[test]

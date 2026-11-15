@@ -3,10 +3,10 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import ProjectView from "./ProjectView";
 
 type Student = { work: string; supervisor: string };
 type Entry = { id: string; name: string; method: string; student: Student | null; path: string; modified: number; last_backup: number | null; exists: boolean };
-type Content = { name: string; method: string; student: Student | null; created: number; modified: number };
 type Inspected = { kind: "mine" | "other"; owner_name: string; owner_here: boolean; has_halves: boolean; name: string | null; modified: number | null; in_list: boolean };
 type View = "list" | "new" | "studentKey" | "opened" | "backup" | "restore";
 
@@ -77,7 +77,7 @@ export default function Projects(props: { aside: ReactNode; msg: string; setMsg:
   const [supFile, setSupFile] = useState("");
 
   // opened, backup, restore
-  const [opened, setOpened] = useState<Content | null>(null);
+  const [opened, setOpened] = useState<string>("");
   const [target, setTarget] = useState<Entry | null>(null);
   const [file, setFile] = useState("");
   const [info, setInfo] = useState<Inspected | null>(null);
@@ -103,7 +103,7 @@ export default function Projects(props: { aside: ReactNode; msg: string; setMsg:
   // ----- list -----
   const due = list.filter(stale);
   const startNew = () => { setName(""); setMethod("ІФА"); setIsStudent(false); setWork("курсова"); setSup(""); setFolder(""); setMsg(""); go("new"); };
-  const openProject = (e: Entry) => run(async () => { setOpened(await invoke<Content>("open_project", { id: e.id })); setMsg(""); go("opened"); });
+  const openProject = (e: Entry) => { setOpened(e.id); setMsg(""); go("opened"); };
   const snooze = () => { try { localStorage.setItem(SNOOZE, String(Date.now() + 86400_000)); } catch { /* per-session only */ } setBanner(false); };
   const backupAll = () => run(async () => {
     const dir = await open({ directory: true, title: "Куди зберегти копії всіх проєктів" });
@@ -129,7 +129,7 @@ export default function Projects(props: { aside: ReactNode; msg: string; setMsg:
     });
     await refresh();
     if (r.words) { setCreated({ ...r.entry, exists: true }); setWords(r.words); setHalfSaved(false); setSupFile(""); go("studentKey"); }
-    else { setOpened(await invoke<Content>("open_project", { id: r.entry.id })); go("opened"); }
+    else { setOpened(r.entry.id); go("opened"); }
   });
 
   // ----- student key -----
@@ -146,7 +146,7 @@ export default function Projects(props: { aside: ReactNode; msg: string; setMsg:
   const studentMissing = !halfSaved ? "Позначте, що записали свою половину." : !supFile ? "Збережіть файл для супервайзера(ки)." : "";
   const finishStudent = () => run(async () => {
     await invoke("forget_supervisor_half");
-    setOpened(await invoke<Content>("open_project", { id: created!.id }));
+    setOpened(created!.id);
     setWords([]);
     go("opened");
   });
@@ -360,15 +360,7 @@ export default function Projects(props: { aside: ReactNode; msg: string; setMsg:
         </section>
       )}
 
-      {view === "opened" && opened && (
-        <section className="card wide" aria-label="Проєкт">
-          <button className="link" style={{ alignSelf: "flex-start", textDecoration: "none" }} onClick={() => go("list")}>← Мої проєкти</button>
-          <span className="label">Проєкт відкрито</span>
-          <h2>{opened.name}</h2>
-          <span className="small">{opened.method} · {opened.student ? `${workLabel(opened.student)} · супервайзер(ка): ${opened.student.supervisor}` : "Власне дослідження"} · створено {fmt(opened.created)}</span>
-          <p className="lead">Проєкт поки порожній: інтерв'ю, словник замін і кодування з'являться на кроках 1.3–1.5. Тут видно, що файл відмикається вашим паролем.</p>
-        </section>
-      )}
+      {view === "opened" && opened && <ProjectView id={opened} onBack={() => { refresh(); go("list"); }} />}
 
       {view === "backup" && target && (
         <section className="card wide" aria-label="Резервна копія">

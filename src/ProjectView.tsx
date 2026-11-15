@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { applyDict, guessRole, parseTranscript, suspects, type Role } from "./text";
-import CodingSheet, { type CodingActions } from "./Coding";
+import CodingSheet, { type CodingActions } from "./CodingSheet";
 import Codebook from "./Codebook";
 import { nextColor, quote, statuses, type Code } from "./coding";
 import { applyDict as segsFor } from "./text";

@@ -376,7 +376,10 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                       <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={() => setView("dict")}>До словника замін →</button></div>
                   )}
                   {iv.audio === "deleted" ? (
-                    <div className="audioline small">Запис видалено після звірки транскрипту.</div>
+                    <div className="audioline">
+                      <span className="grow small">Запис видалено після звірки транскрипту.</span>
+                      <button className="link" style={{ fontSize: 12 }} onClick={pickAudio}>Вказати файл запису…</button>
+                    </div>
                   ) : priv.audio[iv.id] && audioState[iv.id] === "ok" ? (
                     <>
                       <audio ref={audioEl} key={iv.id} src={convertFileSrc(priv.audio[iv.id].path)} preload="metadata" />

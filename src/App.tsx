@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Projects from "./Projects";
 
 type Profile = { id: string; name: string; initials: string; autolock_min: number };
 type Screen =
@@ -52,7 +53,6 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
-  const [note, setNote] = useState("");
 
   // creation
   const [name, setName] = useState("");
@@ -110,7 +110,7 @@ export default function App() {
   }, [inApp, me?.autolock_min]);
 
   function enter(p: Profile, message = "") {
-    setMe(p); setSel(p.id); setMsg(message); setNote("");
+    setMe(p); setSel(p.id); setMsg(message);
     setLpw(""); setPw(""); setPw2(""); setCur(""); setPhrase(""); setWrong(false); setWaitUntil(0);
     refresh();
     go("projects");
@@ -455,30 +455,7 @@ export default function App() {
           )}
 
           {screen === "projects" && me && (
-            <>
-              {msg && (
-                <div className="msg" role="status">
-                  <span className="grow">{msg}</span>
-                  <button className="link" style={{ minHeight: 32 }} onClick={() => setMsg("")} aria-label="Закрити повідомлення">✕</button>
-                </div>
-              )}
-              <div className="split">
-                <section aria-label="Мої проєкти">
-                  <div className="row" style={{ alignItems: "flex-end", gap: "12px 24px" }}>
-                    <div className="stack" style={{ gap: 4 }}>
-                      <span className="label">Мої проєкти</span>
-                      <span className="title">0 проєктів</span>
-                    </div>
-                    <div className="grow" />
-                    <button className="btn sm" onClick={() => setNote("Відкриття резервної копії з'явиться на кроці 1.2.")}>Відкрити резервну копію</button>
-                    <button className="btn sm primary" onClick={() => setNote("Створення проєктів з'явиться на кроці 1.2.")}>+ Новий проєкт</button>
-                  </div>
-                  <div className="empty">
-                    <span style={{ fontSize: 15, fontWeight: 500 }}>Проєктів ще немає</span>
-                    <span className="lead" style={{ maxWidth: 440 }}>Створіть новий проєкт або відкрийте резервну копію чи файл, який вам надіслали. Кожен проєкт — один зашифрований файл у теці «Документи / QDA».</span>
-                    <span className="small" aria-live="polite">{note}</span>
-                  </div>
-                </section>
+            <Projects key={me.id} msg={msg} setMsg={setMsg} aside={
                 <aside aria-label="Профіль">
                   <span className="label">Профіль</span>
                   <div className="kv"><span>Ініціали</span><span className="mono">{me.initials}</span></div>
@@ -501,8 +478,7 @@ export default function App() {
                     </div>
                   )}
                 </aside>
-              </div>
-            </>
+            } />
           )}
 
           {screen === "changePass" && (

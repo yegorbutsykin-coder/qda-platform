@@ -22,11 +22,31 @@ pub const MIN_PASSWORD_CHARS: usize = 10;
 const ARGON_MEMORY_KIB: u32 = 64 * 1024;
 const ARGON_PASSES: u32 = 3;
 
+/// Ciphertext under a key that is already random (no password stretching needed).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Blob {
+    nonce: String,
+    ct: String,
+}
+
+/// Ciphertext under a key derived from a secret a person holds (password, words).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Sealed {
     salt: String,
-    nonce: String,
-    ct: String,
+    #[serde(flatten)]
+    blob: Blob,
+}
+
+/// The parts of a profile that travel inside every project file, so a copy
+/// opens on another computer with the same password or recovery words.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Owner {
+    pub id: String,
+    pub name: String,
+    pub initials: String,
+    pub created: u64,
+    key_by_password: Sealed,
+    key_by_recovery: Sealed,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -41,6 +61,9 @@ pub struct Profile {
     key_by_recovery: Sealed,
     pub failed: u32,
     pub locked_until: u64,
+    /// The person's list of projects, encrypted with the master key.
+    #[serde(default)]
+    pub(crate) projects: Option<Blob>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -66,35 +89,58 @@ fn kdf(secret: &[u8], salt: &[u8]) -> Key {
     out
 }
 
-fn seal(secret: &[u8], aad: &str, plain: &[u8]) -> Sealed {
-    let salt: [u8; 16] = random();
+pub fn lock(key: &[u8; 32], aad: &str, plain: &[u8]) -> Blob {
     let nonce: [u8; 24] = random();
-    let kek = kdf(secret, &salt);
-    let ct = XChaCha20Poly1305::new(kek.as_ref().into())
+    let ct = XChaCha20Poly1305::new(key.into())
         .encrypt(XNonce::from_slice(&nonce), Payload { msg: plain, aad: aad.as_bytes() })
         .expect("encryption cannot fail");
-    Sealed { salt: B64.encode(salt), nonce: B64.encode(nonce), ct: B64.encode(ct) }
+    Blob { nonce: B64.encode(nonce), ct: B64.encode(ct) }
 }
 
-fn open(secret: &[u8], aad: &str, s: &Sealed) -> Option<Key> {
-    let salt = B64.decode(&s.salt).ok()?;
-    let nonce = B64.decode(&s.nonce).ok()?;
-    let ct = B64.decode(&s.ct).ok()?;
+pub fn unlock(key: &[u8; 32], aad: &str, b: &Blob) -> Option<Zeroizing<Vec<u8>>> {
+    let nonce = B64.decode(&b.nonce).ok()?;
+    let ct = B64.decode(&b.ct).ok()?;
     if nonce.len() != 24 {
         return None;
     }
-    let kek = kdf(secret, &salt);
-    let plain = Zeroizing::new(
-        XChaCha20Poly1305::new(kek.as_ref().into())
-            .decrypt(XNonce::from_slice(&nonce), Payload { msg: &ct, aad: aad.as_bytes() })
-            .ok()?,
-    );
+    XChaCha20Poly1305::new(key.into())
+        .decrypt(XNonce::from_slice(&nonce), Payload { msg: &ct, aad: aad.as_bytes() })
+        .ok()
+        .map(Zeroizing::new)
+}
+
+pub fn to_key(bytes: &[u8]) -> Option<Key> {
     let mut key = Key::default();
-    if plain.len() != 32 {
+    if bytes.len() != 32 {
         return None;
     }
-    key.copy_from_slice(&plain);
+    key.copy_from_slice(bytes);
     Some(key)
+}
+
+pub fn new_key() -> Key {
+    Key::new(random())
+}
+
+pub fn seal(secret: &[u8], aad: &str, plain: &[u8]) -> Sealed {
+    let salt: [u8; 16] = random();
+    Sealed { salt: B64.encode(salt), blob: lock(&kdf(secret, &salt), aad, plain) }
+}
+
+pub fn open(secret: &[u8], aad: &str, s: &Sealed) -> Option<Key> {
+    let salt = B64.decode(&s.salt).ok()?;
+    to_key(&unlock(&kdf(secret, &salt), aad, &s.blob)?)
+}
+
+/// 16 random bytes and their 12 recovery words.
+pub fn new_phrase() -> (Zeroizing<[u8; 16]>, Vec<String>) {
+    let entropy = Zeroizing::new(random::<16>());
+    let words = Mnemonic::from_entropy(entropy.as_ref()).expect("16 bytes is a valid entropy length").words().map(String::from).collect();
+    (entropy, words)
+}
+
+pub fn phrase_entropy(phrase: &str) -> Result<Zeroizing<Vec<u8>>, RecoveryError> {
+    Ok(Zeroizing::new(parse_phrase(phrase)?.to_entropy()))
 }
 
 /// Normalises what a person typed: any spacing, commas, capitals.
@@ -118,13 +164,22 @@ pub fn new_id() -> String {
     random::<16>().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+impl Owner {
+    pub fn unlock(&self, password: &str) -> Option<Key> {
+        open(password.as_bytes(), &format!("qda:{}:password", self.id), &self.key_by_password)
+    }
+
+    pub fn unlock_with_recovery(&self, phrase: &str) -> Result<Key, RecoveryError> {
+        let entropy = phrase_entropy(phrase)?;
+        open(&entropy, &format!("qda:{}:recovery", self.id), &self.key_by_recovery).ok_or(RecoveryError::WrongKey)
+    }
+}
+
 impl Profile {
     /// Returns the profile, its unlocked master key and the 12 recovery words.
     pub fn create(id: String, name: String, initials: String, password: &str, now: u64) -> (Profile, Key, Vec<String>) {
-        let master = Key::new(random());
-        let entropy = Zeroizing::new(random::<16>());
-        let mnemonic = Mnemonic::from_entropy(entropy.as_ref()).expect("16 bytes is a valid entropy length");
-        let words = mnemonic.words().map(String::from).collect();
+        let master = new_key();
+        let (entropy, words) = new_phrase();
         let p = Profile {
             v: 1,
             key_by_password: seal(password.as_bytes(), &format!("qda:{id}:password"), master.as_ref()),
@@ -136,17 +191,45 @@ impl Profile {
             autolock_min: 15,
             failed: 0,
             locked_until: 0,
+            projects: None,
         };
         (p, master, words)
     }
 
+    pub fn owner(&self) -> Owner {
+        Owner {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            initials: self.initials.clone(),
+            created: self.created,
+            key_by_password: self.key_by_password.clone(),
+            key_by_recovery: self.key_by_recovery.clone(),
+        }
+    }
+
+    /// Recreates a profile on a new computer from a project file's header.
+    pub fn from_owner(o: &Owner) -> Profile {
+        Profile {
+            v: 1,
+            id: o.id.clone(),
+            name: o.name.clone(),
+            initials: o.initials.clone(),
+            created: o.created,
+            autolock_min: 15,
+            key_by_password: o.key_by_password.clone(),
+            key_by_recovery: o.key_by_recovery.clone(),
+            failed: 0,
+            locked_until: 0,
+            projects: None,
+        }
+    }
+
     pub fn unlock(&self, password: &str) -> Option<Key> {
-        open(password.as_bytes(), &format!("qda:{}:password", self.id), &self.key_by_password)
+        self.owner().unlock(password)
     }
 
     pub fn unlock_with_recovery(&self, phrase: &str) -> Result<Key, RecoveryError> {
-        let entropy = Zeroizing::new(parse_phrase(phrase)?.to_entropy());
-        open(&entropy, &format!("qda:{}:recovery", self.id), &self.key_by_recovery).ok_or(RecoveryError::WrongKey)
+        self.owner().unlock_with_recovery(phrase)
     }
 
     pub fn set_password(&mut self, master: &Key, password: &str) {

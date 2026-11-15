@@ -1,17 +1,20 @@
 // Hide the extra console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod project;
 mod vault;
 
 use serde::Serialize;
 use std::{path::PathBuf, sync::Mutex, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
+use project::{Content, Entry, OpenError, ProjectFile, Student};
 use vault::{Key, Profile, RecoveryError};
+use zeroize::Zeroizing;
 
 /// Unlocked master key of the person who is working now; dropped (and zeroed) on lock.
 struct Session {
     id: String,
-    _master: Key,
+    master: Key,
 }
 
 /// A profile being created: written to disk only after the recovery words are checked.
@@ -26,6 +29,8 @@ struct Pending {
 struct AppState {
     session: Mutex<Option<Session>>,
     pending: Mutex<Option<Pending>>,
+    /// Supervisor's half of a just-created student project, until it is saved to a file.
+    pending_half: Mutex<Option<(String, String, Zeroizing<Vec<u8>>)>>,
 }
 
 #[derive(Serialize)]
@@ -70,7 +75,7 @@ fn check_password(pw: &str) -> Res<()> {
 }
 
 fn start_session(state: &AppState, p: &Profile, master: Key) -> ProfileInfo {
-    *state.session.lock().unwrap() = Some(Session { id: p.id.clone(), _master: master });
+    *state.session.lock().unwrap() = Some(Session { id: p.id.clone(), master });
     ProfileInfo::from(p)
 }
 
@@ -204,6 +209,7 @@ fn set_autolock(app: AppHandle, state: State<'_, AppState>, minutes: u32) -> Res
 #[tauri::command]
 fn lock(state: State<'_, AppState>) {
     *state.session.lock().unwrap() = None;
+    *state.pending_half.lock().unwrap() = None;
 }
 
 /// `Some(true)` if the system disk is encrypted, `None` if we cannot tell.
@@ -236,8 +242,287 @@ fn print_page(window: WebviewWindow) -> Res<()> {
     window.print().map_err(|e| e.to_string())
 }
 
+// ---------- projects (step 1.2) ----------
+
+/// Runs `f` with the logged-in profile and its master key, then saves the profile.
+fn with_profile<T>(app: &AppHandle, state: &AppState, f: impl FnOnce(&mut Profile, &Key) -> Res<T>) -> Res<T> {
+    let session = state.session.lock().unwrap();
+    let s = session.as_ref().ok_or("locked")?;
+    let d = dir(app)?;
+    let mut p = vault::load(&d, &s.id).map_err(io)?;
+    let out = f(&mut p, &s.master)?;
+    vault::save(&d, &p).map_err(io)?;
+    Ok(out)
+}
+
+fn open_err(e: OpenError) -> String {
+    match e {
+        OpenError::NotAProject => "not_a_project".into(),
+        OpenError::WrongSecret => "wrong".into(),
+        OpenError::BadWords => "bad_words".into(),
+        OpenError::HalfMismatch => "half_mismatch".into(),
+    }
+}
+
+fn projects_dir(app: &AppHandle) -> Res<PathBuf> {
+    app.path().document_dir().map(|d| d.join("QDA")).map_err(|e| e.to_string())
+}
+
+fn entry_of(f: &ProjectFile, c: &Content, path: &std::path::Path, last_backup: Option<u64>) -> Entry {
+    Entry {
+        id: f.id.clone(),
+        name: c.name.clone(),
+        method: c.method.clone(),
+        student: c.student.clone(),
+        path: path.to_string_lossy().into(),
+        modified: c.modified,
+        last_backup,
+    }
+}
+
+/// Copies an opened file into the projects folder under the current owner and lists it.
+fn add_copy(app: &AppHandle, p: &mut Profile, master: &Key, mut f: ProjectFile, pk: &Key) -> Res<Entry> {
+    let c = f.content(pk).ok_or("not_a_project")?;
+    let mut list = project::entries(p, master);
+    if list.iter().any(|e| e.id == f.id) {
+        return Err("already_in_list".into());
+    }
+    f.adopt(p, master, pk);
+    let d = projects_dir(app)?;
+    std::fs::create_dir_all(&d).map_err(io)?;
+    let path = project::free_path(&d, &project::file_stem(&c.name), "qda");
+    f.write(&path).map_err(io)?;
+    let e = entry_of(&f, &c, &path, None);
+    list.push(e.clone());
+    project::set_entries(p, master, &list);
+    Ok(e)
+}
+
+#[derive(Serialize)]
+struct ListedProject {
+    #[serde(flatten)]
+    entry: Entry,
+    exists: bool,
+}
+
+#[tauri::command]
+fn list_projects(app: AppHandle, state: State<'_, AppState>) -> Res<Vec<ListedProject>> {
+    let session = state.session.lock().unwrap();
+    let s = session.as_ref().ok_or("locked")?;
+    let p = vault::load(&dir(&app)?, &s.id).map_err(io)?;
+    Ok(project::entries(&p, &s.master)
+        .into_iter()
+        .map(|e| ListedProject { exists: std::path::Path::new(&e.path).exists(), entry: e })
+        .collect())
+}
+
+#[tauri::command]
+fn default_folder(app: AppHandle) -> Res<String> {
+    Ok(projects_dir(&app)?.to_string_lossy().into())
+}
+
+#[derive(Serialize)]
+struct Created {
+    entry: Entry,
+    words: Option<Vec<String>>,
+}
+
+#[tauri::command]
+async fn create_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+    method: String,
+    work: Option<String>,
+    supervisor: Option<String>,
+    folder: Option<String>,
+) -> Res<Created> {
+    let name = name.trim().to_string();
+    if name.is_empty() || name.chars().count() > 200 || !["ІФА", "Дескр.", "РТА"].contains(&method.as_str()) {
+        return Err("bad_input".into());
+    }
+    let student = match (work, supervisor) {
+        (Some(w), Some(s)) if !s.trim().is_empty() && ["курсова", "бакалаврська", "магістерська"].contains(&w.as_str()) => {
+            Some(Student { work: w, supervisor: s.trim().into() })
+        }
+        (None, None) => None,
+        _ => return Err("bad_input".into()),
+    };
+    let d = match folder {
+        Some(f) => PathBuf::from(f),
+        None => projects_dir(&app)?,
+    };
+    std::fs::create_dir_all(&d).map_err(io)?;
+    let t = now();
+    let content = Content { name: name.clone(), method, student, created: t, modified: t };
+    with_profile(&app, &state, |p, master| {
+        let (f, halves) = ProjectFile::create(p, master, &content);
+        let path = project::free_path(&d, &project::file_stem(&name), "qda");
+        f.write(&path).map_err(io)?;
+        let e = entry_of(&f, &content, &path, None);
+        let mut list = project::entries(p, master);
+        list.push(e.clone());
+        project::set_entries(p, master, &list);
+        let words = halves.map(|(words, supervisor)| {
+            *state.pending_half.lock().unwrap() = Some((f.id.clone(), name.clone(), supervisor));
+            words
+        });
+        Ok(Created { entry: e, words })
+    })
+}
+
+#[tauri::command]
+fn save_supervisor_half(state: State<'_, AppState>, path: String) -> Res<()> {
+    let pending = state.pending_half.lock().unwrap();
+    let (id, name, half) = pending.as_ref().ok_or("no_pending")?;
+    project::write_half_file(std::path::Path::new(&path), id, name, half).map_err(io)
+}
+
+#[tauri::command]
+fn forget_supervisor_half(state: State<'_, AppState>) {
+    *state.pending_half.lock().unwrap() = None;
+}
+
+fn find(p: &Profile, master: &Key, id: &str) -> Res<Entry> {
+    project::entries(p, master).into_iter().find(|e| e.id == id).ok_or_else(|| "not_found".into())
+}
+
+#[tauri::command]
+async fn open_project(app: AppHandle, state: State<'_, AppState>, id: String) -> Res<Content> {
+    with_profile(&app, &state, |p, master| {
+        let e = find(p, master, &id)?;
+        let f = ProjectFile::read(std::path::Path::new(&e.path)).map_err(|_| format!("missing:{}", e.path))?;
+        let pk = f.project_key(master).ok_or("wrong")?;
+        f.content(&pk).ok_or_else(|| "not_a_project".into())
+    })
+}
+
+#[tauri::command]
+async fn backup_project(app: AppHandle, state: State<'_, AppState>, id: String, dest: String) -> Res<()> {
+    let dest = PathBuf::from(dest);
+    if dest.extension().map_or(true, |x| x != "qda") {
+        return Err("bad_input".into());
+    }
+    with_profile(&app, &state, |p, master| {
+        let mut list = project::entries(p, master);
+        let e = list.iter_mut().find(|e| e.id == id).ok_or("not_found")?;
+        let mut f = ProjectFile::read(std::path::Path::new(&e.path)).map_err(|_| format!("missing:{}", e.path))?;
+        f.refresh_owner(p);
+        f.write(&dest).map_err(io)?;
+        // Check the copy really opens before saying it is saved.
+        let copy = ProjectFile::read(&dest).map_err(open_err)?;
+        copy.project_key(master).and_then(|pk| copy.content(&pk)).ok_or("backup_unreadable")?;
+        e.last_backup = Some(now());
+        project::set_entries(p, master, &list);
+        Ok(())
+    })
+}
+
+#[derive(Serialize)]
+struct Inspected {
+    /// "mine": my project; "other": another profile's (name of owner given).
+    kind: &'static str,
+    owner_name: String,
+    owner_here: bool,
+    has_halves: bool,
+    name: Option<String>,
+    modified: Option<u64>,
+    in_list: bool,
+}
+
+#[tauri::command]
+async fn inspect_backup(app: AppHandle, state: State<'_, AppState>, path: String) -> Res<Inspected> {
+    let f = ProjectFile::read(std::path::Path::new(&path)).map_err(open_err)?;
+    let session = state.session.lock().unwrap();
+    let s = session.as_ref().ok_or("locked")?;
+    let d = dir(&app)?;
+    if f.owner.id == s.id {
+        let p = vault::load(&d, &s.id).map_err(io)?;
+        let c = f.project_key(&s.master).and_then(|pk| f.content(&pk)).ok_or("not_a_project")?;
+        let in_list = project::entries(&p, &s.master).iter().any(|e| e.id == f.id);
+        return Ok(Inspected { kind: "mine", owner_name: f.owner.name.clone(), owner_here: true, has_halves: f.has_halves(), name: Some(c.name), modified: Some(c.modified), in_list });
+    }
+    Ok(Inspected {
+        kind: "other",
+        owner_here: vault::load(&d, &f.owner.id).is_ok(),
+        owner_name: f.owner.name.clone(),
+        has_halves: f.has_halves(),
+        name: None,
+        modified: None,
+        in_list: false,
+    })
+}
+
+/// mode: "replace" keeps the current version next to it first; "separate" makes a new project.
+#[tauri::command]
+async fn restore_mine(app: AppHandle, state: State<'_, AppState>, path: String, mode: String, today: String) -> Res<Entry> {
+    let today: String = today.chars().filter(|c| c.is_ascii_digit() || *c == '-').take(10).collect();
+    let f = ProjectFile::read(std::path::Path::new(&path)).map_err(open_err)?;
+    with_profile(&app, &state, |p, master| {
+        let pk = f.project_key(master).ok_or("wrong")?;
+        let c = f.content(&pk).ok_or("not_a_project")?;
+        let mut list = project::entries(p, master);
+        match (mode.as_str(), list.iter().position(|e| e.id == f.id)) {
+            ("replace", Some(i)) => {
+                let target = PathBuf::from(&list[i].path);
+                if target.exists() {
+                    let stem = target.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                    let keep = project::free_path(target.parent().ok_or("bad_path")?, &format!("{stem} — перед відновленням {today}"), "qda");
+                    std::fs::copy(&target, keep).map_err(io)?;
+                }
+                let mut g = f.clone();
+                g.refresh_owner(p);
+                g.write(&target).map_err(io)?;
+                list[i] = entry_of(&g, &c, &target, list[i].last_backup);
+                project::set_entries(p, master, &list);
+                Ok(list[i].clone())
+            }
+            ("separate", Some(_)) => {
+                let mut c2 = c.clone();
+                c2.name = format!("{} (копія {today})", c.name);
+                let mut g = f.duplicate(p, master, &c2);
+                let pk2 = g.project_key(master).ok_or("wrong")?;
+                g.set_content(&pk2, &c2);
+                add_copy(&app, p, master, g, &pk2)
+            }
+            (_, None) => add_copy(&app, p, master, f.clone(), &pk),
+            _ => Err("bad_input".into()),
+        }
+    })
+}
+
+/// A copy from a profile that is not on this computer: its password or words bring back the profile and the project.
+#[tauri::command]
+async fn restore_foreign(app: AppHandle, path: String, secret: String, way: String) -> Res<String> {
+    let f = ProjectFile::read(std::path::Path::new(&path)).map_err(open_err)?;
+    let master = match way.as_str() {
+        "password" => f.owner.unlock(&secret).ok_or("wrong")?,
+        "words" => f.owner.unlock_with_recovery(&secret).map_err(recovery_err)?,
+        _ => return Err("bad_input".into()),
+    };
+    let pk = f.project_key(&master).ok_or("wrong")?;
+    let d = dir(&app)?;
+    let mut p = vault::load(&d, &f.owner.id).unwrap_or_else(|_| Profile::from_owner(&f.owner));
+    match add_copy(&app, &mut p, &master, f.clone(), &pk) {
+        Ok(_) => {}
+        Err(e) if e == "already_in_list" => {}
+        Err(e) => return Err(e),
+    }
+    vault::save(&d, &p).map_err(io)?;
+    Ok(p.name)
+}
+
+/// Student project after losing both password and profile key: their words + the supervisor's file.
+#[tauri::command]
+async fn restore_halves(app: AppHandle, state: State<'_, AppState>, path: String, words: String, half: String) -> Res<Entry> {
+    let f = ProjectFile::read(std::path::Path::new(&path)).map_err(open_err)?;
+    let pk = f.project_key_by_halves(&words, std::path::Path::new(&half)).map_err(open_err)?;
+    with_profile(&app, &state, |p, master| add_copy(&app, p, master, f.clone(), &pk))
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             list_profiles,
@@ -252,7 +537,18 @@ fn main() {
             lock,
             disk_encryption,
             open_disk_settings,
-            print_page
+            print_page,
+            list_projects,
+            default_folder,
+            create_project,
+            save_supervisor_half,
+            forget_supervisor_half,
+            open_project,
+            backup_project,
+            inspect_backup,
+            restore_mine,
+            restore_foreign,
+            restore_halves
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

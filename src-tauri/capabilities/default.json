@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Main window: no file or system access yet",
+  "description": "Main window: system Open and Save dialogs only; all file work goes through the engine",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]
 }

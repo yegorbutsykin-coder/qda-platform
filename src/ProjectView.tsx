@@ -243,6 +243,8 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
       : e === "no_whisper" ? "У програмі бракує модуля транскрипції — перевстановіть програму." : e === "format_windows" ? "На Windows поки що підтримуються лише wav, mp3, ogg, flac."
       : e.startsWith("convert") ? "Не вдалося прочитати аудіофайл." : e === "cancelled" ? "Зупинено." : e;
 
+  const dur = (sec: number) => (sec < 90 ? `${Math.round(sec)} с` : sec < 5400 ? `${Math.round(sec / 60)} хв` : `${(sec / 3600).toFixed(1).replace(".", ",")} год`);
+
   // ----- add interview -----
   const [file, setFile] = useState("");
   const [raw, setRaw] = useState("");
@@ -504,7 +506,8 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                           <div className="txbar" aria-hidden="true"><div style={{ width: `${txPct[iv.id] ?? 0}%` }} /></div>
                           <span className="small">
                             {({ convert: "1/3 · Перетворюю запис", load: "2/3 · Завантажую модель", recognize: "3/3 · Розпізнаю мовлення" } as Record<string, string>)[txInfo[iv.id]?.stage ?? "convert"] ?? "Готуюся"}
-                            {txInfo[iv.id] ? ` · минуло ${Math.round((Date.now() - txInfo[iv.id].since) / 1000)} с` : ""}
+                            {txInfo[iv.id] ? ` · минуло ${dur((Date.now() - txInfo[iv.id].since) / 1000)}` : ""}
+                            {txInfo[iv.id] && (txPct[iv.id] ?? 0) >= 2 ? ` · залишилося ≈ ${dur(((Date.now() - txInfo[iv.id].since) / 1000) * (100 - txPct[iv.id]) / txPct[iv.id])}` : ""}
                           </span>
                           {txInfo[iv.id]?.detail && <span className="mono small" style={{ overflowWrap: "anywhere" }}>{txInfo[iv.id].detail}</span>}
                           <span className="small">Запис нікуди не надсилається. Тим часом можна працювати з іншими інтерв'ю. Якщо закрити програму, транскрипцію доведеться почати знову.</span>

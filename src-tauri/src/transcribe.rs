@@ -212,7 +212,12 @@ fn run(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, audi
     // 16 kHz, 16-bit mono: 32 bytes per millisecond after the 44-byte header.
     let duration_ms = fs::metadata(wav).map(|m| m.len().saturating_sub(44) / 32).unwrap_or(0).max(1);
     // The graphics card makes it several times faster; if it fails on this computer, run on the processor.
-    whisper(map, pids, job, wav, model_file, language, true, duration_ms).or_else(|e| {
+    // No useful graphics acceleration on Intel (see the build): straight to the processor.
+    let gpu_first = !cfg!(target_arch = "x86_64");
+    whisper(map, pids, job, wav, model_file, language, gpu_first, duration_ms).or_else(|e| {
+        if !gpu_first {
+            return Err(e);
+        }
         if e == "cancelled" || map.lock().unwrap().get(job).and_then(|p| p.error.clone()).is_some() {
             return Err("cancelled".into());
         }
@@ -230,6 +235,9 @@ fn whisper(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, 
         .arg("-f").arg(wav)
         .args(["-l", language, "-t", &threads.to_string(), "-pp"])
         .args(if gpu { &[][..] } else { &["-ng"][..] })
+        // Intel Macs and Windows PCs run on the processor: greedy decoding is several times faster
+        // than the 5-way beam search, with a small loss in accuracy.
+        .args(if cfg!(target_arch = "x86_64") { &["-bs", "1", "-bo", "1"][..] } else { &[][..] })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

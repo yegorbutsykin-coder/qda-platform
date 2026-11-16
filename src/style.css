@@ -263,3 +263,11 @@ mark.suspect { background: transparent; border-bottom: 2px dashed var(--accent);
 textarea.edittext { resize: none; }
 .noteclamp.other { color: var(--muted); border-left: 2px solid var(--line); padding-left: 6px; margin-bottom: 4px; }
 .ctag { color: var(--accent); font-size: 11px; font-family: Inter, sans-serif; }
+
+/* step 3.5: remarks */
+.remark { display: flex; flex-direction: column; gap: 4px; font-family: Inter, sans-serif; }
+.rchip { align-self: flex-start; font-size: 11px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 2px; }
+.rchip.open { color: var(--accent); border-color: var(--accent); }
+.rchip.fixed { color: var(--ink); }
+.rchip.closed { color: var(--muted); }
+.rreply { color: var(--ink); }

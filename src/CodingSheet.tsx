@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Remark, type RemarkPatch } from "./Remarks";
 import { noteParts, pieces, quote, snap, type App, type Code } from "./coding";
 import { applyDict, insertMark, MARK_RE, TX_MARKS, wordKey, type Role, type Segment } from "./text";
 import { initialsOf, type Person, speaker, type Interview, type Note, type Private } from "./model";
@@ -10,6 +11,7 @@ export type CodingActions = {
   create: (name: string, rep: number, s: number, e: number) => void;
   removeApps: (ids: string[]) => void;
   setNote: (rep: number, text: string, counter?: boolean) => void;
+  remark: (key: string, patch: RemarkPatch) => void;
 };
 
 export type EditActions = {
@@ -172,24 +174,32 @@ function Popup(props: {
   );
 }
 
-function NoteCell(props: { note?: Note; others: Note[]; who: (by: string) => string; t: string | null; me: string; save: (text: string, counter?: boolean) => void }) {
+function NoteCell(props: {
+  note?: [string, Note]; others: [string, Note][]; who: (by: string) => string; t: string | null; me: string;
+  save: (text: string, counter?: boolean) => void; remark: (key: string, patch: RemarkPatch) => void;
+}) {
+  const mine = props.note?.[1];
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(props.note?.text ?? "");
+  const [draft, setDraft] = useState(mine?.text ?? "");
   const timer = useRef<number | undefined>(undefined);
-  useEffect(() => setDraft(props.note?.text ?? ""), [props.note?.text]);
+  useEffect(() => setDraft(mine?.text ?? ""), [mine?.text]);
   const change = (v: string) => {
     setDraft(v);
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => props.save(v), 800);
   };
-  const done = () => { window.clearTimeout(timer.current); if (draft !== (props.note?.text ?? "")) props.save(draft); setOpen(false); };
+  const done = () => { window.clearTimeout(timer.current); if (draft !== (mine?.text ?? "")) props.save(draft); setOpen(false); };
   return (
     <div className="notecell">
-      {props.others.filter((n) => n.text.trim()).map((n, k) => (
-        <p key={k} className="noteclamp other" title={n.text}><span className="mono small">{props.who(n.by)}</span>{n.counter && <span className="ctag"> ↯ контрінтуїтивне</span>} {n.text}</p>
+      {props.others.filter(([, n]) => n.text.trim()).map(([k, n]) => (
+        <div key={k} className="stack" style={{ gap: 2, marginBottom: 6 }}>
+          <p className="noteclamp other" title={n.text}><span className="mono small">{props.who(n.by)}</span>{n.counter && <span className="ctag"> ↯ контрінтуїтивне</span>} {n.text}</p>
+          <Remark n={n} me={props.me} who={props.who} set={(p) => props.remark(k, p)} />
+        </div>
       ))}
-      {props.note?.text && <p className="noteclamp">{props.note.counter && <span className="ctag">↯ контрінтуїтивне </span>}{props.note.text}</p>}
-      <button className="notebtn" onClick={() => setOpen(true)}>{props.note?.text ? "Розгорнути" : "+ Коментар"}</button>
+      {mine?.text && <p className="noteclamp">{mine.counter && <span className="ctag">↯ контрінтуїтивне </span>}{mine.text}</p>}
+      {mine && <Remark n={mine} me={props.me} who={props.who} set={(p) => props.remark(props.note![0], p)} />}
+      <button className="notebtn" onClick={() => setOpen(true)}>{mine?.text ? "Розгорнути" : "+ Коментар"}</button>
       {open && (
         <div className="notecard" role="dialog" aria-label="Коментар">
           <div className="row" style={{ justifyContent: "space-between" }}>
@@ -199,12 +209,12 @@ function NoteCell(props: { note?: Note; others: Note[]; who: (by: string) => str
           <textarea className="input mono" rows={9} autoFocus value={draft} placeholder="Попередня інтерпретація, асоціації, питання до тексту…" aria-label="Текст коментаря"
             onChange={(e) => change(e.target.value)} onKeyDown={(e) => e.key === "Escape" && done()} />
           <label className="check" style={{ fontSize: 12 }}>
-            <input type="checkbox" checked={!!props.note?.counter} disabled={!draft.trim()}
+            <input type="checkbox" checked={!!mine?.counter} disabled={!draft.trim()}
               onChange={(e) => { window.clearTimeout(timer.current); props.save(draft, e.target.checked); }} />
             <span>Контрінтуїтивне прочитання — тлумачення всупереч очевидному</span>
           </label>
           <div className="row" style={{ justifyContent: "space-between" }}>
-            <span className="small">{props.me} · зберігається автоматично</span>
+            <span className="small">{props.who(props.me)} · зберігається автоматично</span>
             <button className="btn sm primary" onClick={done}>Готово</button>
           </div>
         </div>
@@ -224,10 +234,10 @@ export default function CodingSheet(props: {
   const [sel, setSel] = useState<Sel | null>(null);
   const lastBox = useRef<HTMLTextAreaElement | null>(null); // the transcript field a mark button goes into
   // Everyone's comments, per replica ("iv:rep" or "iv:rep:author").
-  const byRep = new Map<number, Note[]>();
+  const byRep = new Map<number, [string, Note][]>();
   for (const [k, n] of Object.entries(props.notes)) {
     const p = noteParts(k, iv.id);
-    if (p) byRep.set(p.rep, [...(byRep.get(p.rep) ?? []), n]);
+    if (p) byRep.set(p.rep, [...(byRep.get(p.rep) ?? []), [k, n]]);
   }
   const reps = priv.originals[iv.id] ?? [];
   const segsOf = (i: number) => applyDict(reps[i].text, priv.dict, iv.id);
@@ -319,8 +329,8 @@ export default function CodingSheet(props: {
                 );
               })}
             </p>
-            <NoteCell note={(byRep.get(i) ?? []).find((n) => n.by === props.me)} others={(byRep.get(i) ?? []).filter((n) => n.by !== props.me)}
-              who={(by) => initialsOf(props, by)} t={r.t} me={initialsOf(props, props.me)} save={(text, counter) => props.act.setNote(i, text, counter)} />
+            <NoteCell note={(byRep.get(i) ?? []).find(([, n]) => n.by === props.me)} others={(byRep.get(i) ?? []).filter(([, n]) => n.by !== props.me)}
+              who={(by) => initialsOf(props, by)} t={r.t} me={props.me} save={(text, counter) => props.act.setNote(i, text, counter)} remark={props.act.remark} />
           </div>
         );
       })}

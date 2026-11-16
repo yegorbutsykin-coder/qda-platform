@@ -12,7 +12,11 @@ export type Tx = { state: "running" | "error" | "interrupted"; model: string; la
 export type Interview = { id: string; n: number; card: Card; replicas: SharedReplica[]; added: number; audio?: "kept" | "deleted"; tx?: Tx };
 export type AudioRef = { path: string; fp: string; name: string };
 /** `counter`: marked as a counter-intuitive reading (stage 3.4). */
-export type Note = { text: string; by: string; at: number; counter?: boolean };
+export type Note = {
+  text: string; by: string; at: number; counter?: boolean;
+  /** Supervision (stage 3.5): a remark goes open → fixed (by the student, maybe with a reply) → closed or reopened. */
+  status?: "open" | "fixed" | "closed"; statusAt?: number; reply?: { text: string; by: string; at: number };
+};
 /** A researcher in the project: codes, coding and comments carry their profile id in `by`. */
 export type Person = { name: string; initials: string };
 export type Shared = { fields: Field[]; interviews: Interview[]; codes: Code[]; apps: App[]; notes: Record<string, Note>; cats: Cat[]; supers: Super[]; levels?: Levels; people?: Record<string, Person>; copyOf?: CopyOf };

@@ -13,55 +13,63 @@ const said = (e: unknown) => {
   return s;
 };
 
-/** «Додати зміни від колеги…»: open a package, see what changed, choose code names, add. */
-export default function Merge(props: {
-  shared: Shared; priv: Private; projectId: string; onBack: () => void; onMerge: (s: Shared, text: string) => void;
-}) {
+/** A package file and its 6 words; `use` gets what was inside and returns an error to show, if any. */
+export function PackPicker(props: { title: string; onBack: () => void; use: (body: any) => string | void }) {
   const [file, setFile] = useState("");
   const [phrase, setPhrase] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [plan, setPlan] = useState<MergePlan | null>(null);
-  const [take, setTake] = useState<Set<string>>(new Set());
-
   const pick = async () => {
-    const p = await open({ title: "Зміни від колеги", filters: [{ name: "Пакет QDA", extensions: ["qdapack"] }] });
-    if (typeof p === "string") { setFile(p); setPlan(null); setError(""); }
+    const p = await open({ title: props.title, filters: [{ name: "Пакет QDA", extensions: ["qdapack"] }] });
+    if (typeof p === "string") { setFile(p); setError(""); }
   };
   async function read() {
     setBusy(true); setError("");
     try {
-      const b = await invoke<ReturnBody | { kind: string; project: { id: string } }>("open_pack", { path: file, phrase });
-      if (b.kind !== "return") throw "Це копія проєкту, а не повернення змін. Її відкривають у «Моїх проєктах» → «Відкрити пакет…».";
-      if (b.project.id !== props.projectId) throw "Ці зміни зроблено в копії іншого проєкту.";
-      setPlan(planMerge(props.shared, props.priv, b as ReturnBody));
-      setTake(new Set());
+      const e = props.use(await invoke("open_pack", { path: file, phrase }));
+      if (e) setError(e);
     } catch (e) {
       setError(said(e));
     } finally {
       setBusy(false);
     }
   }
+  return (
+    <section className="card wide stack" style={{ gap: 14 }} aria-label={props.title}>
+      <h2 style={{ margin: 0 }}>{props.title}</h2>
+      <div className="row">
+        <span className="mono path">{file || "файл не обрано"}</span>
+        <button className="btn sm quiet" disabled={busy} onClick={pick}>{file ? "Обрати інший файл…" : "Обрати файл…"}</button>
+      </div>
+      <form className="stack" style={{ gap: 10 }} onSubmit={(e) => { e.preventDefault(); read(); }}>
+        <label className="stack" style={{ gap: 4, fontSize: 13 }}>Фраза з 6 слів, яку вам передали окремо від файлу
+          <input className="input mono" value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} />
+        </label>
+        {error && <span className="bad" role="alert">{error}</span>}
+        <div className="row" style={{ gap: 10 }}>
+          <button className="btn primary" type="submit" disabled={busy || !file || phrase.trim().split(/\s+/).length !== 6}>{busy ? "Відкриваю…" : "Відкрити"}</button>
+          <button className="btn quiet" type="button" onClick={props.onBack}>Скасувати</button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+/** «Додати зміни від колеги…»: open a package, see what changed, choose code names, add. */
+export default function Merge(props: {
+  shared: Shared; priv: Private; projectId: string; onBack: () => void; onMerge: (s: Shared, text: string) => void;
+}) {
+  const [plan, setPlan] = useState<MergePlan | null>(null);
+  const [take, setTake] = useState<Set<string>>(new Set());
 
   if (!plan) {
     return (
-      <section className="card wide stack" style={{ gap: 14 }} aria-label="Додати зміни від колеги">
-        <h2 style={{ margin: 0 }}>Додати зміни від колеги</h2>
-        <div className="row">
-          <span className="mono path">{file || "файл не обрано"}</span>
-          <button className="btn sm quiet" disabled={busy} onClick={pick}>{file ? "Обрати інший файл…" : "Обрати файл…"}</button>
-        </div>
-        <form className="stack" style={{ gap: 10 }} onSubmit={(e) => { e.preventDefault(); read(); }}>
-          <label className="stack" style={{ gap: 4, fontSize: 13 }}>Фраза з 6 слів, яку вам передали окремо від файлу
-            <input className="input mono" value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} />
-          </label>
-          {error && <span className="bad" role="alert">{error}</span>}
-          <div className="row" style={{ gap: 10 }}>
-            <button className="btn primary" type="submit" disabled={busy || !file || phrase.trim().split(/\s+/).length !== 6}>{busy ? "Відкриваю…" : "Відкрити"}</button>
-            <button className="btn quiet" type="button" onClick={props.onBack}>Скасувати</button>
-          </div>
-        </form>
-      </section>
+      <PackPicker title="Додати зміни від колеги" onBack={props.onBack} use={(b: ReturnBody | { kind: string; project: { id: string } }) => {
+        if (b.kind !== "return") return "Це копія проєкту, а не повернення змін. Її відкривають у «Моїх проєктах» → «Відкрити пакет…».";
+        if (b.project.id !== props.projectId) return "Ці зміни зроблено в копії іншого проєкту.";
+        setPlan(planMerge(props.shared, props.priv, b as ReturnBody));
+        setTake(new Set());
+      }} />
     );
   }
 

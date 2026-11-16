@@ -5,7 +5,9 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { applyDict, guessRole, parseTranscript, segmentsToReplicas, suspects, type Role, type TxSegment } from "./text";
 import Compare, { LANGS } from "./Compare";
 import Share from "./Share";
-import Merge from "./Merge";
+import Merge, { PackPicker } from "./Merge";
+import { RemarksView, Remark, type RemarkPatch, type RemarkRow } from "./Remarks";
+import { updateCopy } from "./exchange";
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
 import Codebook from "./Codebook";
 import CodesPanel from "./CodesPanel";
@@ -117,7 +119,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const [shared, setShared] = useState<Shared>(emptyShared());
   const [priv, setPriv] = useState<Private>(emptyPrivate());
   const [error, setError] = useState("");
-  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share" | "merge">("main");
+  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share" | "merge" | "remarks" | "update">("main");
   const [focus, setFocus] = useState<string | null>(null);
   const [underlines, setUnderlines] = useState(true);
   const [leftTab, setLeftTab] = useState<"iv" | "codes">("iv");
@@ -187,6 +189,29 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const fragShared = useMemo(() => (focus ? sharedFragments(shared.apps, focus) : new Map<string, string[]>()), [shared.apps, focus]);
   const fragPeople = new Set(shared.apps.filter((a) => a.code === focus).map((a) => a.by)).size;
   const copy = shared.copyOf;
+  function setRemark(key: string, patch: RemarkPatch) {
+    const n = shared.notes[key];
+    if (n) commit({ ...shared, notes: { ...shared.notes, [key]: { ...n, ...patch, statusAt: Date.now() } } }, priv);
+  }
+  const who = (by: string) => initialsOf(shared, by);
+  const remarkRows: RemarkRow[] = Object.entries(shared.notes).filter(([, n]) => n.status).map(([key, n]) => {
+    if (key.startsWith("code:")) {
+      const c = shared.codes.find((x) => x.id === key.split(":")[1]);
+      return { key, n, where: `код «${c?.name ?? "?"}»`, go: c ? () => { setFocus(c.id); setView("frags"); } : undefined };
+    }
+    const x = shared.interviews.find((v) => key.startsWith(v.id + ":"));
+    const p = x ? noteParts(key, x.id) : null;
+    return x && p ? { key, n, where: `${pad(x.n)} · ${x.card.pseudonym}${priv.originals[x.id]?.[p.rep]?.t ? " · " + priv.originals[x.id][p.rep].t : ""}`, go: () => goContext(x.id, p.rep) } : { key, n, where: "—" };
+  });
+  const openRemarks = remarkRows.filter((r) => r.n.status !== "closed").length;
+  // A remark on a code (in a supervisor's copy): one per person, beside the code's fragments.
+  function setCodeRemark(code: string, text: string) {
+    const key = `code:${code}:${me}`;
+    const notes = { ...shared.notes };
+    if (text.trim()) notes[key] = { ...notes[key], text, by: me, at: Date.now(), ...(notes[key]?.status ? {} : { status: "open" as const, statusAt: Date.now() }) };
+    else delete notes[key];
+    commit({ ...shared, notes }, priv);
+  }
   const coders = [...new Set([props.me.id, ...shared.apps.map((a) => a.by)])];
   const flagged = new Set(allSuspects.filter((s) => !iv || s.interviews.includes(iv.id)).map((s) => s.key));
   const ivSuspects = allSuspects.filter((s) => iv && s.interviews.includes(iv.id));
@@ -394,6 +419,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
     removeApps(ids) {
       undoable(ids.length > 1 ? "Ваші коди з фрагмента прибрано." : "Код із фрагмента прибрано.", { ...shared, apps: shared.apps.filter((a) => !ids.includes(a.id)) }, priv);
     },
+    remark: setRemark,
     setNote(rep, text, counter) {
       const notes = { ...shared.notes };
       // My comment keeps its key; a replica someone else commented on gets mine beside theirs.
@@ -401,7 +427,9 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
       const key = Object.keys(notes).find((k) => notes[k].by === me && noteParts(k, iv!.id)?.rep === rep)
         ?? (notes[base] ? `${base}:${me}` : base);
       const flag = counter ?? notes[key]?.counter;
-      if (text.trim()) notes[key] = { text, by: me, at: Date.now(), ...(flag ? { counter: true } : {}) };
+      // In a supervisor's copy every comment is a remark: it starts "open".
+      const status = notes[key]?.status ?? (copy?.kind === "supervisor" ? "open" : undefined);
+      if (text.trim()) notes[key] = { ...notes[key], text, by: me, at: Date.now(), counter: flag || undefined, ...(status && !notes[key]?.status ? { status, statusAt: Date.now() } : {}) };
       else delete notes[key];
       commit({ ...shared, notes }, priv);
     },
@@ -492,7 +520,13 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
               <span className="title">{meta.name}</span>
             </div>
             <div className="grow" />
-            {copy ? <button className="btn sm primary" onClick={() => setView("share")}>Надіслати зміни…</button> : (
+            {remarkRows.length > 0 && <button className="btn sm" onClick={() => setView("remarks")}>Зауваження · {openRemarks}</button>}
+            {copy ? (
+              <>
+                <button className="btn sm" onClick={() => setView("update")}>Оновити копію…</button>
+                <button className="btn sm primary" onClick={() => setView("share")}>Надіслати зміни…</button>
+              </>
+            ) : (
               <>
                 <button className="btn sm" onClick={() => setView("merge")}>Додати зміни від колеги…</button>
                 <button className="btn sm" onClick={() => setView("share")} disabled={!shared.interviews.length}>Поділитися…</button>
@@ -645,6 +679,19 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
         <Share shared={shared} priv={priv} projectId={props.id} name={meta.name} method={meta.method} me={props.me}
           suspects={allSuspects.map((x) => x.word)} onBack={() => setView("main")} toDict={() => setView("dict")} />
       )}
+      {view === "remarks" && (
+        <RemarksView rows={remarkRows} me={me} who={who} set={setRemark} onBack={() => setView("main")} />
+      )}
+      {view === "update" && copy && (
+        <PackPicker title="Оновити копію новою версією" onBack={() => setView("main")} use={(b) => {
+          if (b.kind !== copy.kind) return b.kind === "return" ? "Це повернення змін, а не нова версія проєкту." : "Цей пакет іншого виду, ніж ваша копія.";
+          if (b.project.id !== copy.project) return "Це пакет іншого проєкту. Його відкривають у «Моїх проєктах» → «Відкрити пакет…».";
+          if (b.sent <= copy.sent) return "Ця версія не новіша за вашу копію.";
+          const r = updateCopy(shared, priv, props.me, b.data, { project: b.project.id, from: b.from, kind: b.kind, stage: b.stage, sent: b.sent, received: Date.now(), blind: b.blind });
+          undoable(`Копію оновлено до версії від ${new Date(b.sent).toLocaleDateString("uk-UA")}; ваше кодування й коментарі збережено${r.unplaced ? `, крім ${r.unplaced} — їхніх слів у новій версії немає` : ""}.`, r.shared, r.priv);
+          setView("main");
+        }} />
+      )}
       {view === "merge" && (
         <Merge shared={shared} priv={priv} projectId={props.id} onBack={() => setView("main")}
           onMerge={(s, text) => { undoable(text, s, priv); setView("main"); }} />
@@ -771,6 +818,25 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
             <button className="btn sm" onClick={() => setView("main")}>← До транскрипту</button>
           </div>
           {fragCode.note && <div className="panel"><span className="label">Попередня інтерпретація</span><p className="mono" style={{ fontSize: 13, lineHeight: 1.7 }}>{fragCode.note}</p></div>}
+          {(copy?.kind === "supervisor" || Object.keys(shared.notes).some((k) => k.startsWith(`code:${fragCode.id}:`))) && (
+            <div className="panel stack" style={{ gap: 8 }}>
+              <span className="label">Зауваження до коду</span>
+              {Object.entries(shared.notes).filter(([k, n]) => k.startsWith(`code:${fragCode.id}:`) && n.by !== me).map(([k, n]) => (
+                <div key={k} className="stack" style={{ gap: 4 }}>
+                  <span className="mono" style={{ fontSize: 13, lineHeight: 1.7 }}><span className="small">{who(n.by)}</span> {n.text}</span>
+                  <Remark n={n} me={me} who={who} set={(p) => setRemark(k, p)} />
+                </div>
+              ))}
+              {copy?.kind === "supervisor" && (
+                <>
+                  <textarea key={fragCode.id} className="input mono" rows={3} defaultValue={shared.notes[`code:${fragCode.id}:${me}`]?.text ?? ""}
+                    placeholder="Зауваження до коду: межі, назва, чи пасує до фрагментів…" aria-label="Зауваження до коду"
+                    onBlur={(e) => { if (e.currentTarget.value !== (shared.notes[`code:${fragCode.id}:${me}`]?.text ?? "")) setCodeRemark(fragCode.id, e.currentTarget.value); }} />
+                  {shared.notes[`code:${fragCode.id}:${me}`] && <Remark n={shared.notes[`code:${fragCode.id}:${me}`]} me={me} who={who} set={(p) => setRemark(`code:${fragCode.id}:${me}`, p)} />}
+                </>
+              )}
+            </div>
+          )}
           {fragPeople > 1 && (
             <div className="stack" style={{ gap: 6 }}>
               <div className="row" style={{ gap: 12 }}>

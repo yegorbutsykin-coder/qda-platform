@@ -4,7 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import ProjectView from "./ProjectView";
-import { emptyPrivate, type CopyOf, type Person } from "./model";
+import type { CopyOf, Person } from "./model";
+import { copyPrivate } from "./exchange";
 import type { PackBody } from "./Share";
 
 type Student = { work: string; supervisor: string };
@@ -123,7 +124,7 @@ export default function Projects(props: { me: Person & { id: string }; aside: Re
     const b = pack!;
     const copyOf: CopyOf = { project: b.project.id, from: b.from, kind: b.kind, stage: b.stage, sent: b.sent, received: Date.now(), blind: b.blind };
     // The copy's "originals" are the texts with replacements: the real words never leave the owner.
-    const priv = { ...emptyPrivate(), originals: Object.fromEntries(b.data.interviews.map((x) => [x.id, x.replicas.map((r) => ({ id: r.id, t: r.t, label: null, role: r.role, text: r.text }))])) };
+    const priv = copyPrivate(b.data);
     const e = await invoke<Entry>("create_copy_project", { name: b.project.name, method: b.project.method, data: { ...b.data, copyOf }, private: priv });
     setPhrase("");
     await refresh();

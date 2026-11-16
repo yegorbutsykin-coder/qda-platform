@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyMerge, buildReturn, planMerge, shownToOrig } from "./exchange";
+import { applyMerge, buildReturn, planMerge, shownToOrig, updateCopy } from "./exchange";
 import { emptyPrivate, emptyShared, type Private, type Shared } from "./model";
 import { applyDict } from "./text";
 
@@ -72,5 +72,53 @@ describe("a colleague's changes come back", () => {
     const plan = planMerge(ownerShared, { ...ownerPriv, originals: { iv: [] } }, body);
     expect(plan.apps.length).toBe(0);
     expect(plan.unplaced).toBe(3);
+  });
+});
+
+describe("supervision through files", () => {
+  const student = { id: "st", name: "Олена Коваль", initials: "ОК" };
+  const sup = { id: "sv", name: "Єгор Буцикін", initials: "ЄБ" };
+  const text = "Мені було страшно.";
+  const sPriv: Private = { ...emptyPrivate(), originals: { iv: [{ id: "r1", t: null, label: null, role: "p", text }] } };
+  const s0: Shared = {
+    ...emptyShared(), people: { st: student },
+    interviews: [{ id: "iv", n: 1, card: { pseudonym: "Марта" } as never, replicas: [{ id: "r1", t: null, role: "p", text }], added: 0 }],
+    codes: [{ id: "c1", name: "страх", color: "#000", by: "st", at: 1 }],
+  };
+  const copyOf = (sent: number) => ({ project: "S", from: student, kind: "supervisor" as const, sent, received: sent, blind: false });
+
+  it("remark → fixed with a reply → closed, each side keeping the latest status", () => {
+    // The supervisor's copy, with a remark on the replica and one on the code.
+    const c1 = updateCopy({ ...emptyShared() }, emptyPrivate(), sup, s0, copyOf(1));
+    c1.shared.notes = {
+      "iv:0:sv": { text: "Чому тут «страх», а не «тривога»?", by: "sv", at: 10, status: "open", statusAt: 10 },
+      "code:c1:sv": { text: "Опишіть межі коду.", by: "sv", at: 11, status: "open", statusAt: 11 },
+    };
+    // Back to the student.
+    const ret1 = buildReturn(c1.shared, c1.priv, sup);
+    let s = applyMerge(s0, planMerge(s0, sPriv, ret1), new Set());
+    expect(s.notes["iv:0:sv"].status).toBe("open");
+    expect(s.notes["code:c1:sv"].text).toBe("Опишіть межі коду.");
+    // The student marks it fixed and answers; then sends a new version.
+    s = { ...s, notes: { ...s.notes, "iv:0:sv": { ...s.notes["iv:0:sv"], status: "fixed", statusAt: 20, reply: { text: "Перейменувала на «тривога».", by: "st", at: 20 } } } };
+    const c2 = updateCopy(c1.shared, c1.priv, sup, s, copyOf(2));
+    expect(c2.shared.notes["iv:0:sv"].status).toBe("fixed");
+    expect(c2.shared.notes["iv:0:sv"].reply?.text).toBe("Перейменувала на «тривога».");
+    expect(c2.shared.notes["code:c1:sv"].status).toBe("open");
+    // The supervisor closes it; the student gets "closed".
+    c2.shared.notes["iv:0:sv"] = { ...c2.shared.notes["iv:0:sv"], status: "closed", statusAt: 30 };
+    const s2 = applyMerge(s, planMerge(s, sPriv, buildReturn(c2.shared, c2.priv, sup)), new Set());
+    expect(s2.notes["iv:0:sv"].status).toBe("closed");
+    expect(s2.notes["iv:0:sv"].reply?.text).toBe("Перейменувала на «тривога».");
+  });
+
+  it("updating a copy keeps the reader's own coding", () => {
+    const c1 = updateCopy({ ...emptyShared() }, emptyPrivate(), sup, s0, copyOf(1));
+    c1.shared.apps = [{ id: "a", code: "c1", iv: "iv", rep: 0, s: 10, e: 17, by: "sv", at: 5 }];
+    const edited = { ...s0, interviews: [{ ...s0.interviews[0], replicas: [{ id: "r1", t: null, role: "p" as const, text: "Мені тоді було страшно." }] }] };
+    const c2 = updateCopy(c1.shared, c1.priv, sup, edited, copyOf(2));
+    const a = c2.shared.apps.find((x) => x.by === "sv")!;
+    expect("Мені тоді було страшно.".slice(a.s, a.e)).toBe("страшно");
+    expect(c2.shared.copyOf?.sent).toBe(2);
   });
 });

@@ -2,7 +2,7 @@
 // Codes in the colleague's copy sit on the text with replacements; the owner's sit on the original.
 
 import { remapApps, type App, type Code } from "./coding";
-import { noteKey, type Note, type Person, type Private, type Shared } from "./model";
+import { adoptPeople, noteKey, type CopyOf, type Note, type Person, type Private, type Shared } from "./model";
 import { applyDict, joinSegments, type Segment } from "./text";
 
 export type ReturnBody = {
@@ -13,7 +13,8 @@ export type ReturnBody = {
   codes: Code[];
   /** Coding by `from`, placed by replica id. */
   apps: (Omit<App, "iv" | "rep"> & { rid: string })[];
-  notes: { rid: string; text: string; at: number; counter?: boolean }[];
+  /** Comments on replicas (`rid`) or on codes (`code`), with their supervision status. */
+  notes: (Omit<Note, "by"> & { rid?: string; code?: string })[];
   /** The text each replica had in the copy, to follow the owner's later edits. */
   texts: Record<string, string>;
 };
@@ -28,15 +29,16 @@ export function buildReturn(s: Shared, p: Private, me: Person & { id: string }):
     return r?.id;
   };
   const apps = s.apps.filter((a) => a.by === me.id && rid(a.iv, a.rep)).map(({ iv, rep, ...a }) => ({ ...a, rid: used(iv, rep)! }));
-  const notes = Object.entries(s.notes).flatMap(([k, n]) => {
-    if (n.by !== me.id || !n.text.trim()) return [];
+  const notes = Object.entries(s.notes).flatMap(([k, { by: _by, ...n }]): ReturnBody["notes"] => {
+    if (_by !== me.id || !n.text.trim()) return [];
+    if (k.startsWith("code:")) return [{ ...n, code: k.split(":")[1] }];
     const [iv, rep] = [k.slice(0, k.indexOf(":")), parseInt(k.slice(k.indexOf(":") + 1))];
     const id = used(iv, rep);
-    return id ? [{ rid: id, text: n.text, at: n.at, ...(n.counter ? { counter: true } : {}) }] : [];
+    return id ? [{ ...n, rid: id }] : [];
   });
   return {
     kind: "return", sent: Date.now(), from: me,
-    project: { id: s.copyOf!.project },
+    project: { id: s.copyOf?.project ?? "" },
     codes: s.codes, apps, notes, texts,
   };
 }
@@ -95,11 +97,11 @@ export function planMerge(s: Shared, p: Private, b: ReturnBody): MergePlan {
     apps.push({ ...a, iv: w.iv, rep: w.rep, s: st, e: en, by: b.from.id });
   }
   const notes: Record<string, Note> = {};
-  for (const n of b.notes) {
-    const w = where.get(n.rid);
-    if (!w) { unplaced++; continue; }
-    const k = `${noteKey(w.iv, w.rep)}:${b.from.id}`;
-    notes[k] = notes[k] ? { ...notes[k], text: notes[k].text + "\n\n" + n.text } : { text: n.text, by: b.from.id, at: n.at, ...(n.counter ? { counter: true } : {}) };
+  for (const { rid, code, ...n } of b.notes) {
+    const w = rid ? where.get(rid) : undefined;
+    const k = code ? (known.has(code) ? `code:${code}:${b.from.id}` : "") : w ? `${noteKey(w.iv, w.rep)}:${b.from.id}` : "";
+    if (!k) { unplaced++; continue; }
+    notes[k] = notes[k] ? { ...notes[k], text: notes[k].text + "\n\n" + n.text } : { ...n, by: b.from.id };
   }
   return {
     from: b.from, newCodes, renamed, apps, notes, unplaced,
@@ -115,6 +117,36 @@ export function applyMerge(s: Shared, m: MergePlan, take: Set<string>): Shared {
     people: { ...(s.people ?? {}), [m.from.id]: { name: m.from.name, initials: m.from.initials } },
     codes: [...s.codes.map((c) => (take.has(c.id) ? { ...c, name: theirs.get(c.id)! } : c)), ...m.newCodes],
     apps: [...s.apps.filter((a) => a.by !== m.from.id), ...m.apps],
-    notes: { ...Object.fromEntries(Object.entries(s.notes).filter(([, n]) => n.by !== m.from.id)), ...m.notes },
+    notes: {
+      ...Object.fromEntries(Object.entries(s.notes).filter(([, n]) => n.by !== m.from.id)),
+      // The text is the author's; the status is whoever changed it last (the student marks "fixed" here).
+      ...Object.fromEntries(Object.entries(m.notes).map(([k, n]) => [k, laterStatus(n, s.notes[k])])),
+    },
   };
+}
+
+/** Of two versions of one remark: the incoming text, with the status changed most recently. */
+export function laterStatus(incoming: Note, here?: Note): Note {
+  if (!here?.status || (incoming.statusAt ?? 0) >= (here.statusAt ?? 0)) return incoming;
+  return { ...incoming, status: here.status, statusAt: here.statusAt, reply: here.reply };
+}
+
+/** A copy's private part: its "originals" are the texts with replacements. */
+export const copyPrivate = (data: Shared): Private => ({
+  originals: Object.fromEntries(data.interviews.map((x) => [x.id, x.replicas.map((r) => ({ id: r.id, t: r.t, label: null, role: r.role, text: r.text }))])),
+  dict: [], ignored: [], audio: {},
+});
+
+/**
+ * A newer package of the same project replaces a copy; this person's own work in the old copy
+ * (coding, codes, comments, remark statuses) is laid onto it the same way as when changes return.
+ */
+export function updateCopy(old: Shared, oldPriv: Private, me: Person & { id: string }, data: Shared, copyOf: CopyOf): { shared: Shared; priv: Private; unplaced: number } {
+  const priv = copyPrivate(data);
+  const fresh = adoptPeople({ ...data, copyOf }, me);
+  const plan = planMerge(fresh, priv, buildReturn(old, oldPriv, me));
+  // Remarks of others whose status was changed here (e.g. the student marked "fixed") keep the later status.
+  const merged = applyMerge(fresh, plan, new Set());
+  const notes = Object.fromEntries(Object.entries(merged.notes).map(([k, n]) => [k, n.by === me.id ? n : laterStatus(n, old.notes[k])]));
+  return { shared: { ...merged, notes }, priv, unplaced: plan.unplaced };
 }

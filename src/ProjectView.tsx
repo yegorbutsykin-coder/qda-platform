@@ -6,7 +6,7 @@ import { applyDict, guessRole, parseTranscript, segmentsToReplicas, suspects, ty
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
 import Codebook from "./Codebook";
 import CodesPanel from "./CodesPanel";
-import { dropReplica, nextColor, quote, remapApps, statuses, type Code } from "./coding";
+import { dropReplica, nextColor, quote, remapApps, splitReplica, statuses, type Code } from "./coding";
 import { applyDict as segsFor } from "./text";
 import { emptyPrivate, emptyShared, GENDERS, newId, noteKey, pad, rebuild, speaker, type Tx, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
 import Dictionary from "./Dictionary";
@@ -402,6 +402,13 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
       const r = dropReplica(shared.apps, shared.notes, iv!.id, rep, { offset: prev.text.length + 1 });
       undoable(`Репліку ${rep + 1} приєднано до попередньої.`, { ...shared, ...r },
         setOrigs(list.flatMap((x, i) => (i === rep ? [] : i === rep - 1 ? [{ ...x, text: x.text + " " + list[rep].text }] : [x]))));
+    },
+    split(rep, text, pos) {
+      const list = origs();
+      const apps = remapApps(shared.apps, iv!.id, rep, list[rep].text, text);
+      const r = splitReplica(apps, shared.notes, iv!.id, rep, text, pos, newId);
+      undoable(`Репліку ${rep + 1} розділено на дві. У другої немає таймкоду.`, { ...shared, apps: r.apps, notes: r.notes },
+        setOrigs(list.flatMap((x, i) => (i === rep ? [{ ...x, text: r.first }, { ...x, t: null, text: r.second }] : [x]))));
     },
   };
 

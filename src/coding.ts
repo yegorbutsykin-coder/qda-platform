@@ -185,3 +185,30 @@ export function dropReplica(
   }
   return { apps: out, notes: next };
 }
+
+/**
+ * Replica `rep` (text `text`) is cut at `pos` into two; spaces at the cut are dropped.
+ * Codes go with their words (a code across the cut becomes two), the comment stays
+ * with the first part, later replicas move down by one.
+ */
+export function splitReplica(
+  apps: App[], notes: Record<string, any>, iv: string, rep: number, text: string, pos: number, newId: () => string,
+): { first: string; second: string; apps: App[]; notes: Record<string, any> } {
+  const first = text.slice(0, pos).trimEnd();
+  const k = pos + (text.slice(pos).length - text.slice(pos).trimStart().length);
+  const second = text.slice(k);
+  const out = apps.flatMap((a): App[] => {
+    if (a.iv !== iv || a.rep < rep) return [a];
+    if (a.rep > rep) return [{ ...a, rep: a.rep + 1 }];
+    const one = { ...a, e: Math.min(a.e, first.length) };
+    const two = { ...a, rep: rep + 1, s: Math.max(0, a.s - k), e: a.e - k };
+    if (two.e <= two.s) return [one];
+    return one.e > one.s ? [one, { ...two, id: newId() }] : [two];
+  });
+  const next: Record<string, any> = {};
+  for (const [key, n] of Object.entries(notes)) {
+    const r = key.startsWith(iv + ":") ? Number(key.slice(iv.length + 1)) : -1;
+    next[r > rep ? `${iv}:${r + 1}` : key] = n;
+  }
+  return { first, second, apps: out, notes: next };
+}

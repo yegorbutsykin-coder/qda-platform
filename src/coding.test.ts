@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labDistance, mergeCodes, nextColor, pieces, dropReplica, quote, remapApps, snap, statuses, type App, type Code } from "./coding";
+import { labDistance, mergeCodes, nextColor, pieces, dropReplica, quote, splitReplica, remapApps, snap, statuses, type App, type Code } from "./coding";
 import { applyDict, type DictEntry } from "./text";
 
 const dict: DictEntry[] = [{ id: "d", kind: "person", from: ["Оксана"], to: "[ім'я]", scope: "all", caps: true }];
@@ -99,5 +99,29 @@ describe("deleting and joining replicas", () => {
     const r = dropReplica(apps, notes, "1", 1, { offset: 10 });
     expect(r.apps.map((a) => [a.id, a.rep, a.s, a.e])).toEqual([["1", 0, 0, 3], ["2", 0, 10, 14], ["3", 1, 2, 5]]);
     expect(r.notes["1:0"].text).toBe("раз\n\nдва");
+  });
+});
+
+describe("splitting a replica", () => {
+  const text = "Ну, це було в березні. Ми тоді ще жили в місті.";
+  const at = (w: string): [number, number] => [text.indexOf(w), text.indexOf(w) + w.length];
+  const apps: App[] = [
+    { ...app(...at("в березні"), "a"), id: "1" },
+    { ...app(...at("березні. Ми тоді"), "b"), id: "2" },
+    { ...app(...at("жили"), "c"), id: "3" },
+    { ...app(0, 2, "d"), rep: 1, id: "4" },
+  ];
+  it("codes follow their words, a code across the cut becomes two", () => {
+    const pos = text.indexOf(" Ми");
+    let n = 0;
+    const r = splitReplica(apps, { "1:0": { text: "к" }, "1:1": { text: "далі" } }, "1", 0, text, pos, () => "new" + n++);
+    expect(r.first).toBe("Ну, це було в березні.");
+    expect(r.second).toBe("Ми тоді ще жили в місті.");
+    const word = (a: App) => (a.rep === 0 ? r.first : a.rep === 1 ? r.second : "?").slice(a.s, a.e);
+    expect(r.apps.filter((a) => a.rep < 2).map((a) => [a.id, a.rep, word(a)])).toEqual([
+      ["1", 0, "в березні"], ["2", 0, "березні."], ["new0", 1, "Ми тоді"], ["3", 1, "жили"],
+    ]);
+    expect(r.apps.find((a) => a.id === "4")!.rep).toBe(2);
+    expect(r.notes).toEqual({ "1:0": { text: "к" }, "1:2": { text: "далі" } });
   });
 });

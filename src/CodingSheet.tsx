@@ -17,12 +17,19 @@ export type EditActions = {
   role: (rep: number, role: Role | null) => void;
   remove: (rep: number) => void;
   join: (rep: number) => void;
+  split: (rep: number, text: string, pos: number) => void;
 };
 
 const grow = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } };
 
 function EditRow(props: { i: number; t: string | null; role: Role | null; text: string; iv: Interview; edit: EditActions }) {
   const { i, edit, iv } = props;
+  const box = useRef<HTMLTextAreaElement | null>(null);
+  const split = () => {
+    const el = box.current!;
+    const pos = el.selectionStart;
+    if (el.value.slice(0, pos).trim() && el.value.slice(pos).trim()) edit.split(i, el.value, pos);
+  };
   return (
     <div className="prow editrow">
       <span className="tc">{props.t ?? ""}</span>
@@ -34,10 +41,14 @@ function EditRow(props: { i: number; t: string | null; role: Role | null; text: 
             ))}
           </div>
           <span className="grow" />
+          {/* mousedown would take the cursor out of the text before the click */}
+          <button className="link" style={{ fontSize: 12 }} onMouseDown={(e) => e.preventDefault()} onClick={split}
+            title="Поставте курсор у тексті туди, де має початися нова репліка (або натисніть Enter)">Розділити в місці курсора</button>
           {i > 0 && <button className="link" style={{ fontSize: 12 }} onClick={() => edit.join(i)}>↑ Приєднати до попередньої</button>}
           <button className="link danger" style={{ fontSize: 12 }} onClick={() => edit.remove(i)}>Видалити</button>
         </div>
-        <textarea className="input mono edittext" defaultValue={props.text} ref={grow} onInput={(e) => grow(e.currentTarget)}
+        <textarea className="input mono edittext" rows={1} defaultValue={props.text} ref={(el) => { box.current = el; grow(el); }} onInput={(e) => grow(e.currentTarget)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); split(); } }}
           aria-label={`Текст репліки ${i + 1}`} onBlur={(e) => edit.text(i, e.currentTarget.value)} />
       </div>
     </div>
@@ -199,7 +210,7 @@ export default function CodingSheet(props: {
       <article className="paper">
         <div className="paperhead">
           <span className="label" style={{ width: 84 }}>Час</span>
-          <span className="label grow">Редагування · справжні слова видно лише вам, заміни зі словника застосуються самі, коди лишаються на своїх словах</span>
+          <span className="label grow">Редагування · справжні слова видно лише вам; заміни зі словника застосуються самі; коди лишаються на своїх словах; Enter — розділити репліку в місці курсора</span>
         </div>
         {reps.map((r, i) => <EditRow key={`${i}:${r.role}:${r.text}`} i={i} t={r.t} role={r.role} text={r.text} iv={iv} edit={props.edit!} />)}
         {!reps.length && <p className="small">Реплік немає.</p>}

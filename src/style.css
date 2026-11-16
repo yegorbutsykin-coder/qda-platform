@@ -240,3 +240,9 @@ mark.suspect { background: transparent; border-bottom: 2px dashed var(--accent);
 .edittext { width: 100%; resize: none; overflow: hidden; font-size: 14px; line-height: 1.75; padding: 8px 10px; min-height: 0; }
 .seg button.sm { height: 28px; font-size: 12px; padding: 0 10px; }
 .prow.editrow { grid-template-columns: 84px 1fr; }
+
+/* step 2.3: model comparison */
+.cmpgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.cmptext { max-height: 440px; overflow: auto; font-size: 13px; line-height: 1.7; border-top: 1px solid var(--line2); padding-top: 8px; }
+.cmptext p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.cmptext .tc { color: var(--muted); font-size: 11px; }

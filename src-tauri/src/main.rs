@@ -653,7 +653,13 @@ fn download_model(app: AppHandle, state: State<'_, AppState>, id: String) -> Res
 
 /// Starts transcribing in the background; `job` is the interview id.
 #[tauri::command]
-fn start_transcription(app: AppHandle, state: State<'_, AppState>, job: String, path: String, model: String, language: String) -> Res<()> {
+fn start_transcription(app: AppHandle, state: State<'_, AppState>, job: String, path: String, model: String, language: String, offset_ms: Option<u64>, duration_ms: Option<u64>) -> Res<()> {
+    // A fragment is for comparing models: at most 10 minutes.
+    let span = match (offset_ms, duration_ms) {
+        (None, None) => None,
+        (o, Some(d)) if d > 0 && d <= 600_000 => Some((o.unwrap_or(0), d)),
+        _ => return Err("bad_input".into()),
+    };
     if job.is_empty() || job.len() > 64 || !job.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("bad_input".into());
     }
@@ -665,7 +671,7 @@ fn start_transcription(app: AppHandle, state: State<'_, AppState>, job: String, 
     if !file.exists() {
         return Err("no_model".into());
     }
-    transcribe::start(&state.jobs, job, PathBuf::from(path), file, language);
+    transcribe::start(&state.jobs, job, PathBuf::from(path), file, language, span);
     Ok(())
 }
 

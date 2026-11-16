@@ -187,13 +187,14 @@ fn to_wav(input: &Path, wav: &Path) -> Result<(), String> {
     }
 }
 
-pub fn start(jobs: &Jobs, job: String, audio: PathBuf, model_file: PathBuf, language: String) {
+/// `span`: (offset, length) in ms to transcribe only a fragment (model comparison).
+pub fn start(jobs: &Jobs, job: String, audio: PathBuf, model_file: PathBuf, language: String, span: Option<(u64, u64)>) {
     let map = jobs.transcriptions.clone();
     let pids = jobs.pids.clone();
     set(&map, &job, |p| *p = Progress { state: "running".into(), stage: "convert".into(), ..Default::default() });
     thread::spawn(move || {
         let wav = std::env::temp_dir().join(format!("qda-{job}.wav"));
-        let result = run(&map, &pids, &job, &audio, &wav, &model_file, &language);
+        let result = run(&map, &pids, &job, &audio, &wav, &model_file, &language, span);
         pids.lock().unwrap().remove(&job);
         let cancelled = map.lock().unwrap().get(&job).and_then(|p| p.error.clone()).as_deref() == Some("cancelled");
         let result = if cancelled { Err("cancelled".to_string()) } else { result };
@@ -207,14 +208,21 @@ pub fn start(jobs: &Jobs, job: String, audio: PathBuf, model_file: PathBuf, lang
 
 type Pids = Arc<Mutex<HashMap<String, u32>>>;
 
-fn run(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, audio: &Path, wav: &Path, model_file: &Path, language: &str) -> Result<Vec<Segment>, String> {
+#[allow(clippy::too_many_arguments)]
+fn run(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, audio: &Path, wav: &Path, model_file: &Path, language: &str, span: Option<(u64, u64)>) -> Result<Vec<Segment>, String> {
     to_wav(audio, wav)?;
     // 16 kHz, 16-bit mono: 32 bytes per millisecond after the 44-byte header.
-    let duration_ms = fs::metadata(wav).map(|m| m.len().saturating_sub(44) / 32).unwrap_or(0).max(1);
+    let total = fs::metadata(wav).map(|m| m.len().saturating_sub(44) / 32).unwrap_or(0);
+    // (offset, length, is a fragment)
+    let span = match span {
+        Some((off, _)) if off >= total => return Err("fragment_past_end".into()),
+        Some((off, len)) => (off, len.min(total - off), true),
+        None => (0, total, false),
+    };
     // The graphics card makes it several times faster; if it fails on this computer, run on the processor.
     // No useful graphics acceleration on Intel (see the build): straight to the processor.
     let gpu_first = !cfg!(target_arch = "x86_64");
-    whisper(map, pids, job, wav, model_file, language, gpu_first, duration_ms).or_else(|e| {
+    whisper(map, pids, job, wav, model_file, language, gpu_first, span).or_else(|e| {
         if !gpu_first {
             return Err(e);
         }
@@ -222,12 +230,12 @@ fn run(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, audi
             return Err("cancelled".into());
         }
         set(map, job, |p| p.detail = format!("відеокарта не спрацювала, працюю процесором ({e})"));
-        whisper(map, pids, job, wav, model_file, language, false, duration_ms)
+        whisper(map, pids, job, wav, model_file, language, false, span)
     })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn whisper(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, wav: &Path, model_file: &Path, language: &str, gpu: bool, duration_ms: u64) -> Result<Vec<Segment>, String> {
+fn whisper(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, wav: &Path, model_file: &Path, language: &str, gpu: bool, span: (u64, u64, bool)) -> Result<Vec<Segment>, String> {
     set(map, job, |p| { p.stage = "load".into(); p.pct = 0; });
     let threads = thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
     let mut child = Command::new(whisper_cli()?)
@@ -235,6 +243,7 @@ fn whisper(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, 
         .arg("-f").arg(wav)
         .args(["-l", language, "-t", &threads.to_string(), "-pp"])
         .args(if gpu { &[][..] } else { &["-ng"][..] })
+        .args(if span.2 { vec!["-ot".to_string(), span.0.to_string(), "-d".to_string(), span.1.to_string()] } else { vec![] })
         // Intel Macs and Windows PCs run on the processor: greedy decoding is several times faster
         // than the 5-way beam search, with a small loss in accuracy.
         .args(if cfg!(target_arch = "x86_64") { &["-bs", "1", "-bo", "1"][..] } else { &[][..] })
@@ -269,7 +278,7 @@ fn whisper(map: &Arc<Mutex<HashMap<String, Progress>>>, pids: &Pids, job: &str, 
     for line in BufReader::new(child.stdout.take().unwrap()).lines().map_while(Result::ok) {
         if let Some(seg) = parse_line(&line) {
             // Progress = how far into the recording the recognised text has reached.
-            let pct = (seg.end_ms * 100 / duration_ms).min(99) as u32;
+            let pct = (seg.end_ms.saturating_sub(span.0) * 100 / span.1.max(1)).min(99) as u32;
             set(map, job, |p| { p.stage = "recognize".into(); p.pct = p.pct.max(pct); });
             segments.push(seg);
         }
@@ -317,7 +326,7 @@ mod pipeline {
         let exe_dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
         fs::copy(dir.join("whisper-cli"), exe_dir.join("whisper-cli")).unwrap();
         let jobs = Jobs::default();
-        start(&jobs, "t1".into(), dir.join("jfk.wav"), dir.join("model.bin"), "auto".into());
+        start(&jobs, "t1".into(), dir.join("jfk.wav"), dir.join("model.bin"), "auto".into(), None);
         let mut seen = Vec::new();
         for _ in 0..240 {
             let p = jobs.transcriptions.lock().unwrap().get("t1").cloned().unwrap();
@@ -330,5 +339,28 @@ mod pipeline {
             thread::sleep(Duration::from_millis(250));
         }
         panic!("still running: {}", seen.last().unwrap());
+    }
+
+    #[test]
+    #[ignore]
+    fn fragment_only() {
+        let dir = PathBuf::from(std::env::var("QDA_WHISPER_TEST").unwrap());
+        let exe_dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        fs::copy(dir.join("whisper-cli"), exe_dir.join("whisper-cli")).unwrap();
+        let jobs = Jobs::default();
+        start(&jobs, "t2".into(), dir.join("jfk.wav"), dir.join("model.bin"), "auto".into(), Some((5000, 3000)));
+        for _ in 0..240 {
+            let p = jobs.transcriptions.lock().unwrap().get("t2").cloned().unwrap();
+            if p.state != "running" {
+                assert_eq!(p.state, "done", "error: {:?}", p.error);
+                for s in p.segments.unwrap() {
+                    println!("{} {} {}", s.start_ms, s.end_ms, s.text);
+                    assert!(s.start_ms >= 5000 && s.end_ms <= 8100);
+                }
+                return;
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+        panic!("still running");
     }
 }

@@ -3,6 +3,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import Player, { seconds } from "./Player";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { applyDict, guessRole, parseTranscript, segmentsToReplicas, suspects, type Role, type TxSegment } from "./text";
+import Compare, { LANGS } from "./Compare";
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
 import Codebook from "./Codebook";
 import CodesPanel from "./CodesPanel";
@@ -112,7 +113,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   const [shared, setShared] = useState<Shared>(emptyShared());
   const [priv, setPriv] = useState<Private>(emptyPrivate());
   const [error, setError] = useState("");
-  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags">("main");
+  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare">("main");
   const [focus, setFocus] = useState<string | null>(null);
   const [underlines, setUnderlines] = useState(true);
   const [leftTab, setLeftTab] = useState<"iv" | "codes">("iv");
@@ -179,7 +180,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   type TxStatus = { state: string; pct: number; error?: string; segments?: TxSegment[]; stage: string; detail: string } | null;
   const [models, setModels] = useState<ModelState[]>([]);
   const [model, setModel] = useState("");
-  const [lang, setLang] = useState("auto");
+  const [lang, setLang] = useState(() => { try { return localStorage.getItem("qda.lang") ?? "auto"; } catch { return "auto"; } });
   const [audioFile, setAudioFile] = useState("");
   const [txPct, setTxPct] = useState<Record<string, number>>({});
   const [txInfo, setTxInfo] = useState<Record<string, { stage: string; detail: string; since: number }>>({});
@@ -188,7 +189,8 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   latest.current = { shared, priv };
   const loadModels = () => invoke<ModelState[]>("models_list").then((ms) => {
     setModels(ms);
-    setModel((cur) => cur || ms.find((m) => m.downloaded)?.id || "");
+    const saved = (() => { try { return localStorage.getItem("qda.model") ?? ""; } catch { return ""; } })();
+    setModel((cur) => cur || (ms.some((m) => m.id === saved && m.downloaded) ? saved : ms.find((m) => m.downloaded)?.id || ""));
   });
   const setTx = (id: string, tx: Tx | undefined, originals?: OrigReplica[]) => {
     const { shared: s, priv: p } = latest.current;
@@ -590,6 +592,15 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
         </>
       )}
 
+      {view === "compare" && audioFile && (
+        <Compare path={audioFile} models={models} onBack={() => setView("add")}
+          onChoose={(m, l) => {
+            setModel(m); setLang(l);
+            try { localStorage.setItem("qda.model", m); localStorage.setItem("qda.lang", l); } catch { /* only a convenience */ }
+            setView("add");
+            notify("Модель і мову обрано; на цьому комп'ютері вони пропонуватимуться й надалі.");
+          }} />
+      )}
       {view === "add" && (
         <section className="card wide" aria-label="Додати інтерв'ю" style={{ maxWidth: 760 }}>
           <h2>Додати інтерв'ю</h2>
@@ -620,9 +631,11 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                 <span className="small">Модель завантажується один раз з офіційного сховища whisper.cpp (huggingface.co) і перевіряється за контрольною сумою. Аудіо при цьому нікуди не надсилається. Далі транскрипція працює без інтернету.</span>
                 <label className="row" style={{ gap: 8, fontSize: 13 }}>Мова запису
                   <select className="input" style={{ height: 34, fontFamily: "inherit" }} value={lang} onChange={(e) => setLang(e.target.value)}>
-                    <option value="auto">визначити автоматично</option><option value="uk">українська</option><option value="ru">російська</option><option value="en">англійська</option>
+                    {Object.entries(LANGS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select></label>
-                <span className="small">Для суржику й змішаної мови спробуйте «автоматично» і «українська» — порівняння моделей і мов з'явиться на наступному кроці. Мовців програма поки не розрізняє: репліки ділить за паузами, а хто говорить, позначите ви.</span>
+                <span className="small">Мовців програма не розрізняє: репліки ділить за паузами, а хто говорить, позначите ви в «Редагувати текст».</span>
+                <button className="link" style={{ alignSelf: "flex-start", fontSize: 13 }} disabled={!models.some((m) => m.downloaded)} onClick={() => setView("compare")}>
+                  Не знаєте, яку модель і мову обрати? Порівняти на фрагменті цього запису →</button>
               </div>
             )}
             {raw && (

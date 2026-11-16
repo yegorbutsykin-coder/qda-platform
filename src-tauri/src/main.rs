@@ -589,6 +589,22 @@ async fn save_project(app: AppHandle, state: State<'_, AppState>, id: String, da
     })
 }
 
+/// Takes a project off the list and moves its file to the Trash (recoverable there), not deleting it outright.
+#[tauri::command]
+async fn delete_project(app: AppHandle, state: State<'_, AppState>, id: String) -> Res<()> {
+    with_profile(&app, &state, |p, master| {
+        let mut list = project::entries(p, master);
+        let i = list.iter().position(|e| e.id == id).ok_or("not_found")?;
+        let path = PathBuf::from(&list[i].path);
+        if path.exists() {
+            trash::delete(&path).map_err(|e| format!("trash:{e}"))?;
+        }
+        list.remove(i);
+        project::set_entries(p, master, &list);
+        Ok(())
+    })
+}
+
 // ---------- exchange packages (step 3.1) ----------
 
 fn logged_in(state: &AppState) -> Res<()> {
@@ -778,7 +794,8 @@ fn main() {
             export_docx,
             make_pack,
             open_pack,
-            create_copy_project
+            create_copy_project,
+            delete_project
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

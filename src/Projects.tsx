@@ -48,6 +48,7 @@ function message(e: unknown): string {
   if (s === "bad_words:0") return "Фраза — це рівно 6 слів, через пробіл.";
   if (s.startsWith("bad_words:")) return `Слова № ${s.slice(10)} немає у списку — перевірте написання.`;
   if (s.startsWith("missing:")) return `Файл проєкту не знайдено: ${s.slice(8)}. Можливо, його перемістили чи видалили; відкрийте резервну копію.`;
+  if (s.startsWith("trash:")) return `Не вдалося перенести файл у Кошик: ${s.slice(6)}`;
   if (s.startsWith("io:")) return `Не вдалося записати файл: ${s.slice(3)}`;
   return known[s] ?? s;
 }
@@ -135,6 +136,13 @@ export default function Projects(props: { me: Person & { id: string }; aside: Re
   const due = list.filter(stale);
   const startNew = () => { setName(""); setMethod("ІФА"); setIsStudent(false); setWork("курсова"); setSup(""); setFolder(""); setMsg(""); go("new"); };
   const openProject = (e: Entry) => { setOpened(e.id); setMsg(""); go("opened"); };
+  const [deleting, setDeleting] = useState("");
+  const removeProject = (e: Entry) => run(async () => {
+    await invoke("delete_project", { id: e.id });
+    setDeleting("");
+    await refresh();
+    setMsg(e.exists ? `Проєкт «${e.name}» видалено: файл перенесено в Кошик, звідти його ще можна повернути. Резервні копії не зачіпаються.` : `Проєкт «${e.name}» прибрано зі списку.`);
+  });
   const snooze = () => { try { localStorage.setItem(SNOOZE, String(Date.now() + 86400_000)); } catch { /* per-session only */ } setBanner(false); };
   const backupAll = () => run(async () => {
     const dir = await open({ directory: true, title: "Куди зберегти копії всіх проєктів" });
@@ -278,10 +286,21 @@ export default function Projects(props: { me: Person & { id: string }; aside: Re
                         </span>
                         <span className={stale(e) ? "accent" : "small"}>Резервна копія: {ago(e.last_backup)}</span>
                       </div>
-                      <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
-                        <button className="btn sm quiet" disabled={!e.exists} onClick={() => { setTarget(e); setMsg(""); go("backup"); }}>Копія</button>
-                        <button className="btn sm primary" disabled={!e.exists || busy} onClick={() => openProject(e)}>Відкрити →</button>
-                      </div>
+                      {deleting === e.id ? (
+                        <div className="stack" style={{ gap: 6, alignItems: "flex-end" }} role="alertdialog" aria-label={`Видалити проєкт ${e.name}`}>
+                          <span className="small" style={{ textAlign: "right", maxWidth: 360 }}>{e.exists ? "Файл проєкту буде перенесено в Кошик — звідти його можна повернути, доки Кошик не очищено." : "Файлу вже немає; проєкт просто зникне зі списку."}</span>
+                          <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                            <button className="btn sm danger" disabled={busy} onClick={() => removeProject(e)}>Видалити «{e.name.length > 24 ? e.name.slice(0, 24) + "…" : e.name}»</button>
+                            <button className="btn sm quiet" onClick={() => setDeleting("")}>Скасувати</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                          <button className="link danger" style={{ fontSize: 12 }} disabled={busy} onClick={() => { setDeleting(e.id); setMsg(""); }}>Видалити</button>
+                          <button className="btn sm quiet" disabled={!e.exists} onClick={() => { setTarget(e); setMsg(""); go("backup"); }}>Копія</button>
+                          <button className="btn sm primary" disabled={!e.exists || busy} onClick={() => openProject(e)}>Відкрити →</button>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>

@@ -103,6 +103,32 @@ export function statuses(order: { id: string }[], apps: App[]): Record<string, "
   }));
 }
 
+/** Codes first used in each interview (in interview order): the "new codes" of that interview. */
+export function newCodesByInterview(order: { id: string }[], apps: App[]): Record<string, string[]> {
+  const pos = new Map(order.map((iv, i) => [iv.id, i]));
+  const first = new Map<string, number>();
+  for (const a of apps) {
+    const p = pos.get(a.iv) ?? Infinity;
+    if (p < (first.get(a.code) ?? Infinity)) first.set(a.code, p);
+  }
+  const out: Record<string, string[]> = Object.fromEntries(order.map((iv) => [iv.id, [] as string[]]));
+  for (const [code, p] of first) if (p !== Infinity) out[order[p].id].push(code);
+  return out;
+}
+
+/**
+ * Where `n` coded interviews in a row first bring no new codes: the index of the last of them, or -1.
+ * An interview not coded yet breaks the run — it may still bring new codes.
+ */
+export function saturationAt(order: { id: string }[], st: Record<string, "none" | "new" | "existing">, n: number): number {
+  let run = 0;
+  for (let i = 0; i < order.length; i++) {
+    run = st[order[i].id] === "existing" ? run + 1 : 0;
+    if (run >= n) return i;
+  }
+  return -1;
+}
+
 // ---------- colours ----------
 
 function lab(hex: string): [number, number, number] {

@@ -271,3 +271,7 @@ textarea.edittext { resize: none; }
 .rchip.fixed { color: var(--ink); }
 .rchip.closed { color: var(--muted); }
 .rreply { color: var(--ink); }
+
+/* step 3.6: new codes and saturation */
+.satline { font-size: 11px; color: var(--accent); text-align: center; border-top: 1px dashed var(--accent); margin: 4px 0 6px; padding-top: 2px; }
+.satbox { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line2); }

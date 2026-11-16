@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labDistance, mergeCodes, nextColor, pieces, dropReplica, quote, sharedFragments, splitReplica, remapApps, snap, statuses, type App, type Code } from "./coding";
+import { labDistance, mergeCodes, nextColor, pieces, dropReplica, newCodesByInterview, quote, saturationAt, sharedFragments, splitReplica, remapApps, snap, statuses, type App, type Code } from "./coding";
 import { applyDict, type DictEntry } from "./text";
 
 const dict: DictEntry[] = [{ id: "d", kind: "person", from: ["Оксана"], to: "[ім'я]", scope: "all", caps: true }];
@@ -143,5 +143,20 @@ describe("shared and single fragments", () => {
   it("overlap with someone else's same code counts; mine or other codes do not", () => {
     const m = sharedFragments([A("1", "p1", 0, 10), A("2", "p2", 5, 15), A("3", "p1", 20, 30), A("4", "p1", 8, 12), A("5", "p2", 20, 30, 1), A("6", "p2", 20, 30, 0, "d")], "c");
     expect(Object.fromEntries(m)).toEqual({ "1": ["p2"], "2": ["p1"], "3": [], "4": ["p2"], "5": [] });
+  });
+});
+
+describe("new codes and saturation", () => {
+  const order = ["1", "2", "3", "4", "5", "6"].map((id) => ({ id }));
+  const A = (iv: string, code: string): App => ({ id: iv + code, code, iv, rep: 0, s: 0, e: 1, by: "p", at: 0 });
+  const apps = [A("1", "a"), A("1", "b"), A("2", "a"), A("2", "c"), A("3", "a"), A("5", "b"), A("6", "c"), A("4", "a")];
+  it("new codes belong to the interview that used them first", () => {
+    expect(newCodesByInterview(order, apps)).toEqual({ "1": ["a", "b"], "2": ["c"], "3": [], "4": [], "5": [], "6": [] });
+  });
+  it("n coded interviews in a row without new codes; an uncoded one breaks the run", () => {
+    const st = statuses(order, apps);
+    expect(saturationAt(order, st, 3)).toBe(4);
+    expect(saturationAt(order, st, 5)).toBe(-1);
+    expect(saturationAt(order, { ...st, "4": "none" }, 3)).toBe(-1);
   });
 });

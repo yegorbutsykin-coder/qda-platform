@@ -19,7 +19,9 @@ export type Note = {
 };
 /** A researcher in the project: codes, coding and comments carry their profile id in `by`. */
 export type Person = { name: string; initials: string };
-export type Shared = { fields: Field[]; interviews: Interview[]; codes: Code[]; apps: App[]; notes: Record<string, Note>; cats: Cat[]; supers: Super[]; levels?: Levels; people?: Record<string, Person>; copyOf?: CopyOf };
+export type Shared = { fields: Field[]; interviews: Interview[]; codes: Code[]; apps: App[]; notes: Record<string, Note>; cats: Cat[]; supers: Super[]; levels?: Levels; people?: Record<string, Person>; copyOf?: CopyOf;
+  /** Saturation mark: this many coded interviews in a row without new codes (stage 3.6). */
+  satN?: number };
 /** Set in a project made from a received package: whose project it copies, and when it came. */
 export type CopyOf = { project: string; from: Person & { id: string }; kind: "copy" | "supervisor"; stage?: string; sent: number; received: number; blind: boolean };
 export type OrigReplica = Replica & { role: Role | null; id?: string };

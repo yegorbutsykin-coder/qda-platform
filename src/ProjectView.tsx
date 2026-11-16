@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import Player, { seconds } from "./Player";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -11,7 +11,7 @@ import { updateCopy } from "./exchange";
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
 import Codebook from "./Codebook";
 import CodesPanel from "./CodesPanel";
-import { dropReplica, nextColor, noteParts, quote, remapApps, sharedFragments, splitReplica, statuses, type Code } from "./coding";
+import { dropReplica, newCodesByInterview, nextColor, noteParts, saturationAt, quote, remapApps, sharedFragments, splitReplica, statuses, type Code } from "./coding";
 import { applyDict as segsFor } from "./text";
 import { adoptPeople, emptyPrivate, emptyShared, ensureIds, initialsOf, type Person, GENDERS, newId, noteKey, pad, rebuild, speaker, type Tx, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
 import Dictionary from "./Dictionary";
@@ -493,6 +493,10 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
     undoable(`Код «${c.name}» і всі його позначки прибрано.`, { ...shared, codes: shared.codes.filter((x) => x.id !== c.id), apps: shared.apps.filter((a) => a.code !== c.id) }, priv);
   };
   const status = statuses(shared.interviews, shared.apps);
+  const newBy = useMemo(() => newCodesByInterview(shared.interviews, shared.apps), [shared.interviews, shared.apps]);
+  const satN = shared.satN ?? 3;
+  const satIdx = saturationAt(shared.interviews, status, satN);
+  const codeName = (id: string) => shared.codes.find((c) => c.id === id)?.name ?? "?";
   const STATUS = { none: "не закодовано", new: "є нові коди", existing: "лише наявні коди" } as const;
   const fragCode = shared.codes.find((c) => c.id === focus);
   const goContext = (ivId: string, rep: number) => { setSel(ivId); setTarget(rep); setView("main"); };
@@ -557,12 +561,36 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
                   <button role="tab" aria-selected={leftTab === "codes"} aria-pressed={leftTab === "codes"} onClick={() => setLeftTab("codes")} style={{ flex: 1 }}>Кодування</button>
                 </div>
                 {leftTab === "codes" && <CodesPanel shared={shared} priv={priv} method={meta.method} commit={commit} undoable={undoable} showFragments={(id) => { setFocus(id); setView("frags"); }} />}
-                {leftTab === "iv" && shared.interviews.map((x) => (
-                  <button key={x.id} className={"ivrow" + (x.id === sel ? " on" : "")} aria-current={x.id === sel} onClick={() => { setSel(x.id); setNowRep(null); }}>
+                {leftTab === "iv" && shared.interviews.map((x, i) => (
+                  <Fragment key={x.id}>
+                  <button className={"ivrow" + (x.id === sel ? " on" : "")} aria-current={x.id === sel} onClick={() => { setSel(x.id); setNowRep(null); }}>
                     <span className="mono">{pad(x.n)}</span><span className="grow">{x.card.pseudonym}</span>{x.tx ? <span className={"small" + (x.tx.state === "running" ? "" : " accent")}>{x.tx.state === "running" ? `транскрибується… ${txPct[x.id] ?? 0}%` : x.tx.state === "error" ? "помилка" : "перервано"}</span>
-                      : <span className={"stdot " + status[x.id]} title={STATUS[status[x.id]]} aria-label={STATUS[status[x.id]]} />}
+                      : <>
+                        {newBy[x.id]?.length > 0 && <span className="mono small" title={`Нові коди: ${newBy[x.id].map(codeName).join(", ")}`}>+{newBy[x.id].length}</span>}
+                        <span className={"stdot " + status[x.id]} title={STATUS[status[x.id]]} aria-label={STATUS[status[x.id]]} />
+                      </>}
                   </button>
+                  {i === satIdx && <div className="satline" role="note">{satN} поспіль без нових кодів</div>}
+                  </Fragment>
                 ))}
+                {leftTab === "iv" && shared.interviews.some((x) => status[x.id] !== "none") && (
+                  <div className="satbox">
+                    <span className="label">Нові коди за інтерв'ю</span>
+                    <svg width={shared.interviews.length * 12} height="44" style={{ maxWidth: "100%" }} viewBox={`0 0 ${shared.interviews.length * 12} 44`} role="img"
+                      aria-label={shared.interviews.map((x) => `${pad(x.n)}: ${newBy[x.id]?.length ?? 0}`).join("; ")}>
+                      {shared.interviews.map((x, k) => {
+                        const max = Math.max(1, ...shared.interviews.map((v) => newBy[v.id]?.length ?? 0));
+                        const h = ((newBy[x.id]?.length ?? 0) / max) * 40;
+                        return <rect key={x.id} x={k * 12 + 2} y={42 - h} width={8} height={Math.max(h, status[x.id] === "none" ? 0 : 1)} fill={status[x.id] === "none" ? "var(--line)" : k === satIdx ? "var(--accent)" : "var(--ink)"} />;
+                      })}
+                    </svg>
+                    <label className="row small" style={{ gap: 6 }}>Позначати, коли поспіль без нових кодів
+                      <select className="input" style={{ height: 26, padding: "0 4px", fontFamily: "inherit", fontSize: 12 }} value={satN} onChange={(e) => commit({ ...shared, satN: Number(e.target.value) }, priv)}>
+                        {[2, 3, 4, 5, 6].map((k) => <option key={k} value={k}>{k}</option>)}
+                      </select></label>
+                    <span className="small">Сатурація — поняття з обґрунтованої теорії; для РТА та ІФА її застосовність критикують. Це допоміжний інструмент, а не критерій.</span>
+                  </div>
+                )}
               </nav>
               {iv && (
                 <section aria-label={`Інтерв'ю ${pad(iv.n)}`}>
@@ -572,6 +600,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
                     {iv.card.gender && <span>{iv.card.gender}</span>}
                     {iv.card.date && <span className="mono">{new Date(iv.card.date).toLocaleDateString("uk-UA")}</span>}
                     {shared.fields.map((f) => <span key={f.id}>{f.name}: {fieldVal(f, iv.card)}</span>)}
+                    {status[iv.id] !== "none" && <span className="small">{newBy[iv.id]?.length ? `нові коди: ${newBy[iv.id].map((c) => `«${codeName(c)}»`).join(", ")}` : "лише наявна кодова книга"}</span>}
                     <span className="grow" />
                     {!iv.tx && !copy && (editing ? <button className="btn sm primary" onClick={() => setEditing(false)}>Готово</button>
                       : <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={() => setEditing(true)}>Редагувати текст</button>)}

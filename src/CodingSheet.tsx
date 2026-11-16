@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { pieces, quote, snap, type App, type Code } from "./coding";
-import { applyDict, wordKey, type Segment } from "./text";
+import { applyDict, wordKey, type Role, type Segment } from "./text";
 import { noteKey, speaker, type Interview, type Note, type Private } from "./model";
 
 type Sel = { rep: number; s: number; e: number; x: number; y: number };
@@ -11,6 +11,38 @@ export type CodingActions = {
   removeApps: (ids: string[]) => void;
   setNote: (rep: number, text: string) => void;
 };
+
+export type EditActions = {
+  text: (rep: number, text: string) => void;
+  role: (rep: number, role: Role | null) => void;
+  remove: (rep: number) => void;
+  join: (rep: number) => void;
+};
+
+const grow = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } };
+
+function EditRow(props: { i: number; t: string | null; role: Role | null; text: string; iv: Interview; edit: EditActions }) {
+  const { i, edit, iv } = props;
+  return (
+    <div className="prow editrow">
+      <span className="tc">{props.t ?? ""}</span>
+      <div className="stack grow" style={{ gap: 6 }}>
+        <div className="row" style={{ gap: 6 }}>
+          <div className="seg" role="group" aria-label={`Хто говорить, репліка ${i + 1}`}>
+            {([["i", "Інтерв'юер(ка)"], ["p", iv.card.pseudonym || "Учасник(ця)"], ["o", "Інше"]] as const).map(([r, l]) => (
+              <button key={r} className="sm" aria-pressed={props.role === r} onClick={() => edit.role(i, props.role === r ? null : r)}>{l}</button>
+            ))}
+          </div>
+          <span className="grow" />
+          {i > 0 && <button className="link" style={{ fontSize: 12 }} onClick={() => edit.join(i)}>↑ Приєднати до попередньої</button>}
+          <button className="link danger" style={{ fontSize: 12 }} onClick={() => edit.remove(i)}>Видалити</button>
+        </div>
+        <textarea className="input mono edittext" defaultValue={props.text} ref={grow} onInput={(e) => grow(e.currentTarget)}
+          aria-label={`Текст репліки ${i + 1}`} onBlur={(e) => edit.text(i, e.currentTarget.value)} />
+      </div>
+    </div>
+  );
+}
 
 /** Stacked underlines: one bar per code, lying one under another. */
 function bars(colors: string[]): CSSProperties {
@@ -148,7 +180,7 @@ const CAP = /(\p{Lu}[\p{Ll}'’ʼ-]*\p{Ll}|\p{Lu}{2,6})/gu;
 export default function CodingSheet(props: {
   iv: Interview; priv: Private; codes: Code[]; apps: App[]; notes: Record<string, Note>; me: string;
   original: boolean; underlines: boolean; focus: string | null; flagged: Set<string>; act: CodingActions; target?: number | null;
-  seek?: (t: string) => void; nowRep?: number | null;
+  seek?: (t: string) => void; nowRep?: number | null; edit?: EditActions;
 }) {
   const { iv, priv, codes, original, focus } = props;
   const [sel, setSel] = useState<Sel | null>(null);
@@ -161,6 +193,19 @@ export default function CodingSheet(props: {
     if (props.target == null) return;
     document.getElementById(`rep-${props.target}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [props.target, iv.id]);
+
+  if (props.edit) {
+    return (
+      <article className="paper">
+        <div className="paperhead">
+          <span className="label" style={{ width: 84 }}>Час</span>
+          <span className="label grow">Редагування · справжні слова видно лише вам, заміни зі словника застосуються самі, коди лишаються на своїх словах</span>
+        </div>
+        {reps.map((r, i) => <EditRow key={`${i}:${r.role}:${r.text}`} i={i} t={r.t} role={r.role} text={r.text} iv={iv} edit={props.edit!} />)}
+        {!reps.length && <p className="small">Реплік немає.</p>}
+      </article>
+    );
+  }
 
   function onMouseUp() {
     const s = window.getSelection();

@@ -114,3 +114,92 @@ mod tests {
         assert!(t3.contains("в Ірпені"));
     }
 }
+
+/// One paragraph of an exported transcript.
+#[derive(serde::Deserialize)]
+pub struct Line {
+    pub t: Option<String>,
+    pub who: Option<String>,
+    pub text: String,
+}
+
+fn esc(s: &str) -> String {
+    // Control characters other than tab/newline are not allowed in XML.
+    s.chars().filter(|c| !c.is_control() || *c == '\t').collect::<String>()
+        .replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+fn run(text: &str, style: &str) -> String {
+    format!(r#"<w:r><w:rPr>{style}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r>"#, esc(text))
+}
+
+/// Writes a plain Word document: title, card line, then one paragraph per replica
+/// ("00:01:23  Speaker: text"). Readable back by `read`.
+pub fn write_docx(path: &Path, title: &str, meta: &str, lines: &[Line]) -> Result<(), String> {
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+    if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("docx")) != Some(true) {
+        return Err("not_docx".into());
+    }
+    let font = r#"<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>"#;
+    let para = |runs: String, after: u32| format!(r#"<w:p><w:pPr><w:spacing w:after="{after}" w:line="300" w:lineRule="auto"/></w:pPr>{runs}</w:p>"#);
+    let mut body = para(run(title, &format!("{font}<w:b/><w:sz w:val=\"28\"/>")), 80);
+    if !meta.is_empty() {
+        body += &para(run(meta, &format!("{font}<w:color w:val=\"666666\"/><w:sz w:val=\"20\"/>")), 320);
+    }
+    for l in lines {
+        let mut runs = String::new();
+        if let Some(t) = l.t.as_deref().filter(|t| !t.is_empty()) {
+            runs += &run(&format!("{t}  "), &format!("{font}<w:color w:val=\"888888\"/><w:sz w:val=\"20\"/>"));
+        }
+        if let Some(w) = l.who.as_deref().filter(|w| !w.is_empty()) {
+            runs += &run(&format!("{w}: "), &format!("{font}<w:b/><w:sz w:val=\"24\"/>"));
+        }
+        runs += &run(&l.text, &format!("{font}<w:sz w:val=\"24\"/>"));
+        body += &para(runs, 160);
+    }
+    let doc = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1418" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr></w:body></w:document>"#
+    );
+    let files = [
+        ("[Content_Types].xml", r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#.to_string()),
+        ("_rels/.rels", r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#.to_string()),
+        ("word/document.xml", doc),
+    ];
+    // Written next to the target first, so a failure never leaves half a file under the chosen name.
+    let tmp = path.with_extension("docx.part");
+    let result = (|| -> Result<(), String> {
+        let mut z = zip::ZipWriter::new(fs::File::create(&tmp).map_err(|e| format!("io:{e}"))?);
+        for (name, content) in files {
+            z.start_file(name, SimpleFileOptions::default()).map_err(|e| e.to_string())?;
+            z.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+        }
+        z.finish().map_err(|e| e.to_string())?;
+        fs::rename(&tmp, path).map_err(|e| format!("io:{e}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+
+    #[test]
+    fn exported_docx_reads_back() {
+        let path = std::env::temp_dir().join(format!("qda-export-{}.docx", std::process::id()));
+        let lines = vec![
+            Line { t: Some("00:00:03".into()), who: Some("І".into()), text: "Розкажіть, з чого <все> почалося & як.".into() },
+            Line { t: None, who: None, text: "Ну, це було в березні.".into() },
+        ];
+        write_docx(&path, "Інтерв'ю 01 · Марта", "19 р. · жінка", &lines).unwrap();
+        let text = read(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert!(text.contains("Інтерв'ю 01 · Марта"));
+        assert!(text.contains("00:00:03  І: Розкажіть, з чого <все> почалося & як."), "{text}");
+        assert!(text.contains("Ну, це було в березні."));
+        assert!(write_docx(Path::new("/tmp/x.txt"), "a", "", &[]).is_err());
+    }
+}

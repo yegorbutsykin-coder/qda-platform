@@ -237,3 +237,6 @@ mark.suspect { background: transparent; border-bottom: 2px dashed var(--accent);
 .txpanel { display: flex; flex-direction: column; gap: 10px; padding: 28px 32px; background: var(--panel); border: 1px solid var(--line2); font-size: 14px; }
 .txbar { height: 4px; background: var(--line3); }
 .txbar div { height: 4px; background: var(--accent); transition: width 0.5s; }
+.edittext { width: 100%; resize: none; overflow: hidden; font-size: 14px; line-height: 1.75; padding: 8px 10px; min-height: 0; }
+.seg button.sm { height: 28px; font-size: 12px; padding: 0 10px; }
+.prow.editrow { grid-template-columns: 84px 1fr; }

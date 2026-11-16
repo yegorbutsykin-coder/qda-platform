@@ -1,5 +1,5 @@
-// Coding: codes are anchored to the ORIGINAL text of a replica (which never changes),
-// so editing the replacement dictionary never shifts them. Display maps them onto
+// Coding: codes are anchored to the ORIGINAL text of a replica, so editing the
+// replacement dictionary never shifts them; editing the text itself goes through remapApps. Display maps them onto
 // either view. Pure functions: tested in coding.test.ts.
 import type { Segment } from "./text";
 
@@ -144,3 +144,44 @@ export const labDistance = (a: string, b: string) => {
   const x = lab(a), y = lab(b);
   return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
 };
+
+/**
+ * After the original text of a replica is edited, keeps every code on the same words:
+ * the changed stretch is found from the common start and end; codes after it move,
+ * codes inside it stretch or shrink with it. A code whose words were all deleted disappears.
+ */
+export function remapApps(apps: App[], iv: string, rep: number, before: string, after: string): App[] {
+  let a = 0;
+  while (a < before.length && a < after.length && before[a] === after[a]) a++;
+  let bEnd = before.length, aEnd = after.length;
+  while (bEnd > a && aEnd > a && before[bEnd - 1] === after[aEnd - 1]) { bEnd--; aEnd--; }
+  const delta = aEnd - bEnd;
+  const move = (x: number, isEnd: boolean) => (x <= a ? x : x >= bEnd ? x + delta : isEnd ? aEnd : a);
+  return apps
+    .map((x) => (x.iv !== iv || x.rep !== rep ? x : { ...x, s: move(x.s, false), e: move(x.e, true) }))
+    .filter((x) => x.e > x.s);
+}
+
+/**
+ * Replica `rep` goes away: deleted with its codes and comment, or, with `into`, glued onto
+ * the end of the previous replica (its codes move by `offset`, comments are joined).
+ * Later replicas move up by one.
+ */
+export function dropReplica(
+  apps: App[], notes: Record<string, { text: string }>, iv: string, rep: number, into?: { offset: number },
+): { apps: App[]; notes: Record<string, any> } {
+  const out = apps.flatMap((a) => {
+    if (a.iv !== iv || a.rep < rep) return [a];
+    if (a.rep > rep) return [{ ...a, rep: a.rep - 1 }];
+    return into ? [{ ...a, rep: rep - 1, s: a.s + into.offset, e: a.e + into.offset }] : [];
+  });
+  const key = (r: number) => `${iv}:${r}`;
+  const next: Record<string, any> = {};
+  for (const [k, n] of Object.entries(notes)) {
+    const r = k.startsWith(iv + ":") ? Number(k.slice(iv.length + 1)) : -1;
+    if (r < rep) next[k] = n;
+    else if (r > rep) next[key(r - 1)] = n;
+    else if (into) next[key(rep - 1)] = next[key(rep - 1)] ? { ...n, text: next[key(rep - 1)].text + "\n\n" + n.text } : n;
+  }
+  return { apps: out, notes: next };
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labDistance, mergeCodes, nextColor, pieces, quote, snap, statuses, type App, type Code } from "./coding";
+import { labDistance, mergeCodes, nextColor, pieces, dropReplica, quote, remapApps, snap, statuses, type App, type Code } from "./coding";
 import { applyDict, type DictEntry } from "./text";
 
 const dict: DictEntry[] = [{ id: "d", kind: "person", from: ["Оксана"], to: "[ім'я]", scope: "all", caps: true }];
@@ -63,5 +63,41 @@ describe("merging codes", () => {
     const merged = r.apps.filter((x) => x.code === "a").map((x) => [x.by, x.s, x.e]);
     expect(merged).toEqual([["ЄБ", 0, 20], ["ЄБ", 40, 50], ["ОК", 0, 10]]);
     expect(r.apps.filter((x) => x.code === "c")).toHaveLength(1);
+  });
+});
+
+describe("editing text keeps codes on their words", () => {
+  const at = (t: string, w: string): [number, number] => [t.indexOf(w), t.indexOf(w) + w.length];
+  const before = "Ну, це було в березні. Ми тоді ще жили в місті.";
+  const apps: App[] = [
+    { ...app(...at(before, "в березні"), "a"), id: "1" },
+    { ...app(...at(before, "жили в місті"), "b"), id: "2" },
+    { ...app(...at(before, "Ну"), "c"), id: "3" },
+  ];
+  it("insert before, inside and delete", () => {
+    const after = "Ну, це було, мабуть, в березні. Ми тоді ще жили у місті.";
+    const r = remapApps(remapApps(apps, "1", 0, before, "Ну, це було, мабуть, в березні. Ми тоді ще жили в місті."), "1", 0, "Ну, це було, мабуть, в березні. Ми тоді ще жили в місті.", after);
+    const text = (x: App) => after.slice(x.s, x.e);
+    expect(r.map(text)).toEqual(["в березні", "жили у місті", "Ну"]);
+    const cut = "Ми тоді ще жили в місті.";
+    expect(remapApps(apps, "1", 0, before, cut).map((x) => cut.slice(x.s, x.e))).toEqual(["жили в місті"]);
+    expect(remapApps(apps, "1", 1, before, cut)).toEqual(apps); // another replica: untouched
+  });
+});
+
+describe("deleting and joining replicas", () => {
+  const apps: App[] = [
+    { ...app(0, 3, "a"), rep: 0, id: "1" }, { ...app(0, 4, "b"), rep: 1, id: "2" }, { ...app(2, 5, "c"), rep: 2, id: "3" },
+  ];
+  const notes = { "1:0": { text: "раз" }, "1:1": { text: "два" }, "1:2": { text: "три" }, "x:5": { text: "інше" } };
+  it("delete moves later replicas up and drops the deleted one's codes", () => {
+    const r = dropReplica(apps, notes, "1", 1);
+    expect(r.apps.map((a) => [a.id, a.rep])).toEqual([["1", 0], ["3", 1]]);
+    expect(r.notes).toEqual({ "1:0": { text: "раз" }, "1:1": { text: "три" }, "x:5": { text: "інше" } });
+  });
+  it("join keeps codes on their words and joins comments", () => {
+    const r = dropReplica(apps, notes, "1", 1, { offset: 10 });
+    expect(r.apps.map((a) => [a.id, a.rep, a.s, a.e])).toEqual([["1", 0, 0, 3], ["2", 0, 10, 14], ["3", 1, 2, 5]]);
+    expect(r.notes["1:0"].text).toBe("раз\n\nдва");
   });
 });

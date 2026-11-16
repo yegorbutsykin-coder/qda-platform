@@ -545,6 +545,11 @@ async fn read_transcript(path: String) -> Res<String> {
     textfile::read(std::path::Path::new(&path))
 }
 
+#[tauri::command]
+async fn export_docx(path: String, title: String, meta: String, lines: Vec<textfile::Line>) -> Res<()> {
+    textfile::write_docx(std::path::Path::new(&path), &title, &meta, &lines)
+}
+
 #[derive(Serialize)]
 struct Loaded {
     content: Content,
@@ -718,7 +723,8 @@ fn main() {
             download_model,
             start_transcription,
             transcription_status,
-            cancel_transcription
+            cancel_transcription,
+            export_docx
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

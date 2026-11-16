@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import Player, { seconds } from "./Player";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { applyDict, guessRole, parseTranscript, segmentsToReplicas, suspects, type Role, type TxSegment } from "./text";
-import CodingSheet, { type CodingActions } from "./CodingSheet";
+import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
 import Codebook from "./Codebook";
 import CodesPanel from "./CodesPanel";
-import { nextColor, quote, statuses, type Code } from "./coding";
+import { dropReplica, nextColor, quote, remapApps, statuses, type Code } from "./coding";
 import { applyDict as segsFor } from "./text";
 import { emptyPrivate, emptyShared, GENDERS, newId, noteKey, pad, rebuild, speaker, type Tx, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
 import Dictionary from "./Dictionary";
@@ -123,6 +123,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   const [target, setTarget] = useState<number | null>(null);
   const [sel, setSel] = useState<string>("");
   const [original, setOriginal] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   const saving = useRef(Promise.resolve());
@@ -382,6 +383,46 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
       commit({ ...shared, notes }, priv);
     },
   };
+  // ----- editing the transcript -----
+  const origs = () => priv.originals[iv!.id] ?? [];
+  const setOrigs = (list: OrigReplica[]) => ({ ...priv, originals: { ...priv.originals, [iv!.id]: list } });
+  const edit: EditActions = {
+    text(rep, text) {
+      const before = origs()[rep].text;
+      if (text === before) return;
+      commit({ ...shared, apps: remapApps(shared.apps, iv!.id, rep, before, text) }, setOrigs(origs().map((r, i) => (i === rep ? { ...r, text } : r))));
+    },
+    role(rep, role) { commit(shared, setOrigs(origs().map((r, i) => (i === rep ? { ...r, role } : r)))); },
+    remove(rep) {
+      const r = dropReplica(shared.apps, shared.notes, iv!.id, rep);
+      undoable(`Репліку ${rep + 1} видалено разом з її кодами й коментарем.`, { ...shared, ...r }, setOrigs(origs().filter((_, i) => i !== rep)));
+    },
+    join(rep) {
+      const list = origs(), prev = list[rep - 1];
+      const r = dropReplica(shared.apps, shared.notes, iv!.id, rep, { offset: prev.text.length + 1 });
+      undoable(`Репліку ${rep + 1} приєднано до попередньої.`, { ...shared, ...r },
+        setOrigs(list.flatMap((x, i) => (i === rep ? [] : i === rep - 1 ? [{ ...x, text: x.text + " " + list[rep].text }] : [x]))));
+    },
+  };
+
+  /** The transcript as on screen (with replacements, or the original) into a Word file. */
+  async function exportWord() {
+    const x = iv!;
+    const reps = original ? origs() : x.replicas;
+    const title = `Інтерв'ю ${pad(x.n)} · ${x.card.pseudonym}`;
+    const path = await save({ title: "Експорт у Word", defaultPath: `${title}${original ? " (оригінал)" : ""}.docx`.replace(/[\\/:*?"<>|]/g, "-"), filters: [{ name: "Word", extensions: ["docx"] }] });
+    if (!path) return;
+    const meta = [x.card.age && `${x.card.age} р.`, x.card.gender, x.card.date && new Date(x.card.date).toLocaleDateString("uk-UA"),
+      ...shared.fields.map((f) => `${f.name}: ${fieldVal(f, x.card)}`)].filter(Boolean).join(" · ");
+    try {
+      await invoke("export_docx", { path: path.toLowerCase().endsWith(".docx") ? path : path + ".docx", title, meta,
+        lines: reps.map((r) => ({ t: r.t, who: r.role ? speaker(r.role, x.card) : null, text: r.text })) });
+      notify(original ? "Збережено в Word — увага: з оригінальними (справжніми) словами." : "Збережено в Word — текст із замінами.");
+    } catch (e) {
+      setError(`Не вдалося зберегти файл Word: ${e}`);
+    }
+  }
+
   const patchCode = (id: string, patch: Partial<Code>) => commit({ ...shared, codes: shared.codes.map((c) => (c.id === id ? { ...c, ...patch } : c)) }, priv);
   const removeCode = (c: Code) => {
     setFocus(null);
@@ -450,6 +491,9 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                     {iv.card.date && <span className="mono">{new Date(iv.card.date).toLocaleDateString("uk-UA")}</span>}
                     {shared.fields.map((f) => <span key={f.id}>{f.name}: {fieldVal(f, iv.card)}</span>)}
                     <span className="grow" />
+                    {!iv.tx && (editing ? <button className="btn sm primary" onClick={() => setEditing(false)}>Готово</button>
+                      : <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={() => setEditing(true)}>Редагувати текст</button>)}
+                    {!iv.tx && <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={exportWord}>Експорт у Word</button>}
                     <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={editCard}>Змінити картку</button>
                   </div>
                   <div className="row" style={{ gap: "8px 16px" }}>
@@ -525,7 +569,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                   ) : (
                   <CodingSheet iv={iv} priv={priv} codes={byCat ? shared.codes.map((c) => ({ ...c, color: shared.cats.find((k) => k.id === c.cat)?.color ?? c.color })) : shared.codes} apps={shared.apps} notes={shared.notes} me={me} original={original}
                     underlines={underlines} focus={focus} flagged={flagged} act={act} target={target}
-                    seek={priv.audio[iv.id] && audioState[iv.id] === "ok" ? seek : undefined} nowRep={nowRep} />
+                    seek={priv.audio[iv.id] && audioState[iv.id] === "ok" ? seek : undefined} nowRep={nowRep} edit={editing ? edit : undefined} />
                   )}
                   <div className="legend small">
                     <span><mark className="repl">[ім'я]</mark> замінено за словником</span>

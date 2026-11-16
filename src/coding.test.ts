@@ -125,3 +125,15 @@ describe("splitting a replica", () => {
     expect(r.notes).toEqual({ "1:0": { text: "к" }, "1:2": { text: "далі" } });
   });
 });
+
+describe("several people's comments on a replica", () => {
+  const notes = { "1:2:p2": { text: "колега" }, "1:1": { text: "моє" }, "1:1:p2": { text: "колега-1" }, "1:2": { text: "моє-2" } };
+  it("join keeps each person's comment separate", () => {
+    const r = dropReplica([], notes, "1", 2, { offset: 5 });
+    expect(r.notes).toEqual({ "1:1": { text: "моє\n\nмоє-2" }, "1:1:p2": { text: "колега-1\n\nколега" } });
+  });
+  it("split moves both people's later comments", () => {
+    const r = splitReplica([], notes, "1", 1, "раз два", 3, () => "x");
+    expect(Object.keys(r.notes).sort()).toEqual(["1:1", "1:1:p2", "1:3", "1:3:p2"]);
+  });
+});

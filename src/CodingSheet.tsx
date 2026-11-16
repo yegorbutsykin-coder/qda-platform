@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { pieces, quote, snap, type App, type Code } from "./coding";
+import { noteParts, pieces, quote, snap, type App, type Code } from "./coding";
 import { applyDict, insertMark, MARK_RE, TX_MARKS, wordKey, type Role, type Segment } from "./text";
-import { initialsOf, type Person, noteKey, speaker, type Interview, type Note, type Private } from "./model";
+import { initialsOf, type Person, speaker, type Interview, type Note, type Private } from "./model";
 
 type Sel = { rep: number; s: number; e: number; x: number; y: number };
 
@@ -172,7 +172,7 @@ function Popup(props: {
   );
 }
 
-function NoteCell(props: { note?: Note; t: string | null; me: string; save: (text: string) => void }) {
+function NoteCell(props: { note?: Note; others: Note[]; who: (by: string) => string; t: string | null; me: string; save: (text: string) => void }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(props.note?.text ?? "");
   const timer = useRef<number | undefined>(undefined);
@@ -185,6 +185,9 @@ function NoteCell(props: { note?: Note; t: string | null; me: string; save: (tex
   const done = () => { window.clearTimeout(timer.current); if (draft !== (props.note?.text ?? "")) props.save(draft); setOpen(false); };
   return (
     <div className="notecell">
+      {props.others.filter((n) => n.text.trim()).map((n, k) => (
+        <p key={k} className="noteclamp other" title={n.text}><span className="mono small">{props.who(n.by)}</span> {n.text}</p>
+      ))}
       {props.note?.text && <p className="noteclamp">{props.note.text}</p>}
       <button className="notebtn" onClick={() => setOpen(true)}>{props.note?.text ? "Розгорнути" : "+ Коментар"}</button>
       {open && (
@@ -215,6 +218,12 @@ export default function CodingSheet(props: {
   const { iv, priv, codes, original, focus } = props;
   const [sel, setSel] = useState<Sel | null>(null);
   const lastBox = useRef<HTMLTextAreaElement | null>(null); // the transcript field a mark button goes into
+  // Everyone's comments, per replica ("iv:rep" or "iv:rep:author").
+  const byRep = new Map<number, Note[]>();
+  for (const [k, n] of Object.entries(props.notes)) {
+    const p = noteParts(k, iv.id);
+    if (p) byRep.set(p.rep, [...(byRep.get(p.rep) ?? []), n]);
+  }
   const reps = priv.originals[iv.id] ?? [];
   const segsOf = (i: number) => applyDict(reps[i].text, priv.dict, iv.id);
   const color = new Map(codes.map((c) => [c.id, c.color]));
@@ -305,7 +314,8 @@ export default function CodingSheet(props: {
                 );
               })}
             </p>
-            <NoteCell note={props.notes[noteKey(iv.id, i)]} t={r.t} me={props.me} save={(text) => props.act.setNote(i, text)} />
+            <NoteCell note={(byRep.get(i) ?? []).find((n) => n.by === props.me)} others={(byRep.get(i) ?? []).filter((n) => n.by !== props.me)}
+              who={(by) => initialsOf(props, by)} t={r.t} me={initialsOf(props, props.me)} save={(text) => props.act.setNote(i, text)} />
           </div>
         );
       })}

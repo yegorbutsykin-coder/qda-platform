@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import type { Person, Shared } from "./model";
+import type { Person, Private, Shared } from "./model";
+import { buildReturn } from "./exchange";
 
 export const STAGES = ["Етика", "Інтерв'ю", "Транскрипція", "Кодування", "Категорії", "Стаття", "Подано"];
 
@@ -20,9 +21,10 @@ const stem = (s: string) => s.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").trim().s
 
 /** «Поділитися…»: a copy for a colleague or a package for the supervisor, locked by 6 words. */
 export default function Share(props: {
-  shared: Shared; projectId: string; name: string; method: string; me: Person & { id: string };
+  shared: Shared; priv: Private; projectId: string; name: string; method: string; me: Person & { id: string };
   suspects: string[]; onBack: () => void; toDict: () => void;
 }) {
+  const copy = props.shared.copyOf;
   const [kind, setKind] = useState<"copy" | "supervisor">("copy");
   const [blind, setBlind] = useState(false);
   const [stage, setStage] = useState(STAGES[3]);
@@ -33,11 +35,13 @@ export default function Share(props: {
   const s = props.shared;
   const transcribing = s.interviews.filter((x) => x.tx).length;
 
+  const back = copy ? buildReturn(s, props.priv, props.me) : null;
+
   async function make() {
     setError("");
     const path = await save({
       title: "Зберегти пакет",
-      defaultPath: `${stem(props.name)} — ${kind === "copy" ? "для колеги" : "для супервайзера(ки)"}.qdapack`,
+      defaultPath: `${stem(props.name)} — ${copy ? `зміни від ${props.me.name}` : kind === "copy" ? "для колеги" : "для супервайзера(ки)"}.qdapack`,
       filters: [{ name: "Пакет QDA", extensions: ["qdapack"] }],
     });
     if (!path) return;
@@ -57,7 +61,7 @@ export default function Share(props: {
     };
     try {
       const p = path.toLowerCase().endsWith(".qdapack") ? path : path + ".qdapack";
-      setWords(await invoke<string[]>("make_pack", { path: p, body }));
+      setWords(await invoke<string[]>("make_pack", { path: p, body: back ?? body }));
       setFile(p.split(/[\\/]/).pop() ?? p);
     } catch (e) {
       setError(`Не вдалося створити пакет: ${e}`);
@@ -78,6 +82,24 @@ export default function Share(props: {
           <span className="small">Програма фразу не зберігає. Загубили — просто створіть пакет ще раз.</span>
         </div>
         <button className="btn primary" style={{ alignSelf: "flex-start" }} onClick={props.onBack}>Готово</button>
+      </section>
+    );
+  }
+
+  if (back && copy) {
+    return (
+      <section className="card wide stack" style={{ gap: 16 }} aria-label="Надіслати зміни">
+        <h2 style={{ margin: 0 }}>Надіслати зміни власнику(ці) — {copy.from.name}</h2>
+        <div className="panel stack" style={{ gap: 6, fontSize: 13 }}>
+          <span><b>У пакеті лише ваше:</b> фрагментів кодування — {back.apps.length}, нових кодів — {back.codes.filter((c) => c.by === props.me.id).length}, коментарів — {back.notes.length}{back.codes.some((c) => c.by !== props.me.id) ? "; а також назви кодів, якщо ви їх змінювали" : ""}.</span>
+          <span className="small">Власник(ця) додасть зміни до свого проєкту й сам(а) вирішить, чи брати нові назви кодів. Надсилати можна скільки завгодно разів: щоразу йде все ваше кодування, нічого не подвоюється.</span>
+        </div>
+        {!back.apps.length && !back.notes.length && <span className="small">Ви ще нічого не закодували й не прокоментували.</span>}
+        {error && <span className="bad" role="alert">{error}</span>}
+        <div className="row" style={{ gap: 10 }}>
+          <button className="btn primary" onClick={make}>Створити пакет змін…</button>
+          <button className="btn quiet" onClick={props.onBack}>Скасувати</button>
+        </div>
       </section>
     );
   }

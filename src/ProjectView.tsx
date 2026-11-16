@@ -5,10 +5,11 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { applyDict, guessRole, parseTranscript, segmentsToReplicas, suspects, type Role, type TxSegment } from "./text";
 import Compare, { LANGS } from "./Compare";
 import Share from "./Share";
+import Merge from "./Merge";
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
 import Codebook from "./Codebook";
 import CodesPanel from "./CodesPanel";
-import { dropReplica, nextColor, quote, remapApps, splitReplica, statuses, type Code } from "./coding";
+import { dropReplica, nextColor, noteParts, quote, remapApps, splitReplica, statuses, type Code } from "./coding";
 import { applyDict as segsFor } from "./text";
 import { adoptPeople, emptyPrivate, emptyShared, ensureIds, initialsOf, type Person, GENDERS, newId, noteKey, pad, rebuild, speaker, type Tx, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
 import Dictionary from "./Dictionary";
@@ -116,7 +117,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const [shared, setShared] = useState<Shared>(emptyShared());
   const [priv, setPriv] = useState<Private>(emptyPrivate());
   const [error, setError] = useState("");
-  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share">("main");
+  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share" | "merge">("main");
   const [focus, setFocus] = useState<string | null>(null);
   const [underlines, setUnderlines] = useState(true);
   const [leftTab, setLeftTab] = useState<"iv" | "codes">("iv");
@@ -390,8 +391,12 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
     },
     setNote(rep, text) {
       const notes = { ...shared.notes };
-      if (text.trim()) notes[noteKey(iv!.id, rep)] = { text, by: me, at: Date.now() };
-      else delete notes[noteKey(iv!.id, rep)];
+      // My comment keeps its key; a replica someone else commented on gets mine beside theirs.
+      const base = noteKey(iv!.id, rep);
+      const key = Object.keys(notes).find((k) => notes[k].by === me && noteParts(k, iv!.id)?.rep === rep)
+        ?? (notes[base] ? `${base}:${me}` : base);
+      if (text.trim()) notes[key] = { text, by: me, at: Date.now() };
+      else delete notes[key];
       commit({ ...shared, notes }, priv);
     },
   };
@@ -481,8 +486,9 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
               <span className="title">{meta.name}</span>
             </div>
             <div className="grow" />
-            {copy ? null : (
+            {copy ? <button className="btn sm primary" onClick={() => setView("share")}>Надіслати зміни…</button> : (
               <>
+                <button className="btn sm" onClick={() => setView("merge")}>Додати зміни від колеги…</button>
                 <button className="btn sm" onClick={() => setView("share")} disabled={!shared.interviews.length}>Поділитися…</button>
                 <button className="btn sm" onClick={() => setView("dict")}>
                   Словник замін · {priv.dict.length}{allSuspects.length > 0 && <span className="badge" title="Слова, схожі на імена, ще не замінені">{allSuspects.length}</span>}
@@ -624,8 +630,12 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
       )}
 
       {view === "share" && (
-        <Share shared={shared} projectId={props.id} name={meta.name} method={meta.method} me={props.me}
+        <Share shared={shared} priv={priv} projectId={props.id} name={meta.name} method={meta.method} me={props.me}
           suspects={allSuspects.map((x) => x.word)} onBack={() => setView("main")} toDict={() => setView("dict")} />
+      )}
+      {view === "merge" && (
+        <Merge shared={shared} priv={priv} projectId={props.id} onBack={() => setView("main")}
+          onMerge={(s, text) => { undoable(text, s, priv); setView("main"); }} />
       )}
       {view === "compare" && audioFile && (
         <Compare path={audioFile} models={models} onBack={() => setView("add")}

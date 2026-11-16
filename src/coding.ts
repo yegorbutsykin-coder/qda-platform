@@ -156,7 +156,9 @@ export function remapApps(apps: App[], iv: string, rep: number, before: string, 
   let bEnd = before.length, aEnd = after.length;
   while (bEnd > a && aEnd > a && before[bEnd - 1] === after[aEnd - 1]) { bEnd--; aEnd--; }
   const delta = aEnd - bEnd;
-  const move = (x: number, isEnd: boolean) => (x <= a ? x : x >= bEnd ? x + delta : isEnd ? aEnd : a);
+  // Text inserted exactly at a code's edge stays outside the code.
+  const move = (x: number, isEnd: boolean) =>
+    isEnd ? (x <= a ? x : x >= bEnd ? x + delta : aEnd) : (x < a ? x : x >= bEnd ? x + delta : a);
   return apps
     .map((x) => (x.iv !== iv || x.rep !== rep ? x : { ...x, s: move(x.s, false), e: move(x.e, true) }))
     .filter((x) => x.e > x.s);
@@ -175,13 +177,21 @@ export function dropReplica(
     if (a.rep > rep) return [{ ...a, rep: a.rep - 1 }];
     return into ? [{ ...a, rep: rep - 1, s: a.s + into.offset, e: a.e + into.offset }] : [];
   });
-  const key = (r: number) => `${iv}:${r}`;
+  // Keys are "iv:rep" or "iv:rep:author" (several people's comments on one replica).
   const next: Record<string, any> = {};
+  const later: [string, any][] = [];
   for (const [k, n] of Object.entries(notes)) {
-    const r = k.startsWith(iv + ":") ? Number(k.slice(iv.length + 1)) : -1;
-    if (r < rep) next[k] = n;
-    else if (r > rep) next[key(r - 1)] = n;
-    else if (into) next[key(rep - 1)] = next[key(rep - 1)] ? { ...n, text: next[key(rep - 1)].text + "\n\n" + n.text } : n;
+    const p = noteParts(k, iv);
+    if (!p || p.rep < rep) next[k] = n;
+    else later.push([k, n]);
+  }
+  for (const [k, n] of later) {
+    const p = noteParts(k, iv)!;
+    if (p.rep > rep) next[`${iv}:${p.rep - 1}${p.tail}`] = n;
+    else if (into) {
+      const to = `${iv}:${rep - 1}${p.tail}`;
+      next[to] = next[to] ? { ...next[to], text: next[to].text + "\n\n" + n.text } : n;
+    }
   }
   return { apps: out, notes: next };
 }
@@ -207,8 +217,14 @@ export function splitReplica(
   });
   const next: Record<string, any> = {};
   for (const [key, n] of Object.entries(notes)) {
-    const r = key.startsWith(iv + ":") ? Number(key.slice(iv.length + 1)) : -1;
-    next[r > rep ? `${iv}:${r + 1}` : key] = n;
+    const p = noteParts(key, iv);
+    next[p && p.rep > rep ? `${iv}:${p.rep + 1}${p.tail}` : key] = n;
   }
   return { first, second, apps: out, notes: next };
+}
+
+/** "iv:3" or "iv:3:author" → replica 3 and the rest of the key; null for another interview. */
+export function noteParts(key: string, iv: string): { rep: number; tail: string } | null {
+  const m = key.startsWith(iv + ":") ? /^(\d+)(.*)$/.exec(key.slice(iv.length + 1)) : null;
+  return m ? { rep: Number(m[1]), tail: m[2] } : null;
 }

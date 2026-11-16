@@ -4,11 +4,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import ProjectView from "./ProjectView";
+import { emptyPrivate, type CopyOf, type Person } from "./model";
+import type { PackBody } from "./Share";
 
 type Student = { work: string; supervisor: string };
 type Entry = { id: string; name: string; method: string; student: Student | null; path: string; modified: number; last_backup: number | null; exists: boolean };
 type Inspected = { kind: "mine" | "other"; owner_name: string; owner_here: boolean; has_halves: boolean; name: string | null; modified: number | null; in_list: boolean };
-type View = "list" | "new" | "studentKey" | "opened" | "backup" | "restore";
+type View = "list" | "new" | "studentKey" | "opened" | "backup" | "restore" | "pack";
 
 const WEEK = 7 * 86400;
 const METHODS = [["ІФА", "інтерпретативний феноменологічний аналіз"], ["Дескр.", "дескриптивний феноменологічний аналіз"], ["РТА", "рефлексивний тематичний аналіз"]];
@@ -40,7 +42,10 @@ function message(e: unknown): string {
     already_in_list: "Цей проєкт уже є у списку.",
     backup_unreadable: "Копію записано, але вона не відкривається. Спробуйте зберегти в інше місце.",
     bad_input: "Перевірте заповнені поля.",
+    not_a_pack: "Цей файл не є пакетом Платформи QDA або пошкоджений.",
   };
+  if (s === "bad_words:0") return "Фраза — це рівно 6 слів, через пробіл.";
+  if (s.startsWith("bad_words:")) return `Слова № ${s.slice(10)} немає у списку — перевірте написання.`;
   if (s.startsWith("missing:")) return `Файл проєкту не знайдено: ${s.slice(8)}. Можливо, його перемістили чи видалили; відкрийте резервну копію.`;
   if (s.startsWith("io:")) return `Не вдалося записати файл: ${s.slice(3)}`;
   return known[s] ?? s;
@@ -53,7 +58,7 @@ function Choice(props: { on: boolean; onClick: () => void; children: ReactNode; 
   );
 }
 
-export default function Projects(props: { me: string; aside: ReactNode; msg: string; setMsg: (m: string) => void }) {
+export default function Projects(props: { me: Person & { id: string }; aside: ReactNode; msg: string; setMsg: (m: string) => void }) {
   const { msg, setMsg } = props;
   const [view, setView] = useState<View>("list");
   const [list, setList] = useState<Entry[]>([]);
@@ -99,6 +104,31 @@ export default function Projects(props: { me: string; aside: ReactNode; msg: str
   }
   const submit = (fn: () => void) => (e: FormEvent) => { e.preventDefault(); fn(); };
   const errorLine = error ? <span className="bad" role="alert">{error}</span> : null;
+
+  // ----- package from a colleague or a student (step 3.2) -----
+  const [packFile, setPackFile] = useState("");
+  const [phrase, setPhrase] = useState("");
+  const [pack, setPack] = useState<PackBody | null>(null);
+  const pickPack = async () => {
+    const p = await open({ title: "Пакет від колеги", filters: [{ name: "Пакет QDA", extensions: ["qdapack"] }] });
+    if (typeof p === "string") { setPackFile(p); setPack(null); setError(""); }
+  };
+  const startPack = () => { setPackFile(""); setPhrase(""); setPack(null); setMsg(""); go("pack"); pickPack(); };
+  const openPack = () => run(async () => {
+    const body = await invoke<PackBody>("open_pack", { path: packFile, phrase });
+    if (body.kind !== "copy" && body.kind !== "supervisor") throw "Це пакет змін для власника(ці) проєкту: його додають у самому проєкті.";
+    setPack(body);
+  });
+  const addPack = () => run(async () => {
+    const b = pack!;
+    const copyOf: CopyOf = { project: b.project.id, from: b.from, kind: b.kind, stage: b.stage, sent: b.sent, received: Date.now(), blind: b.blind };
+    // The copy's "originals" are the texts with replacements: the real words never leave the owner.
+    const priv = { ...emptyPrivate(), originals: Object.fromEntries(b.data.interviews.map((x) => [x.id, x.replicas.map((r) => ({ id: r.id, t: r.t, label: null, role: r.role, text: r.text }))])) };
+    const e = await invoke<Entry>("create_copy_project", { name: b.project.name, method: b.project.method, data: { ...b.data, copyOf }, private: priv });
+    setPhrase("");
+    await refresh();
+    setOpened(e.id); go("opened");
+  });
 
   // ----- list -----
   const due = list.filter(stale);
@@ -225,6 +255,7 @@ export default function Projects(props: { me: string; aside: ReactNode; msg: str
                   <span className="title">Проєктів: {list.length}</span>
                 </div>
                 <div className="grow" />
+                <button className="btn sm" onClick={startPack}>Відкрити пакет…</button>
                 <button className="btn sm" onClick={startRestore}>Відкрити резервну копію</button>
                 <button className="btn sm primary" onClick={startNew}>+ Новий проєкт</button>
               </div>
@@ -376,6 +407,38 @@ export default function Projects(props: { me: string; aside: ReactNode; msg: str
         </section>
       )}
 
+      {view === "pack" && (
+        <section className="card wide" aria-label="Відкрити пакет">
+          <h2>Відкрити пакет</h2>
+          <div className="row">
+            <span className="mono path">{packFile || "файл не обрано"}</span>
+            <button className="btn sm quiet" disabled={busy} onClick={pickPack}>{packFile ? "Обрати інший файл…" : "Обрати файл…"}</button>
+          </div>
+          {!pack ? (
+            <form className="stack" style={{ gap: 10 }} onSubmit={submit(openPack)}>
+              <label className="stack" style={{ gap: 4, fontSize: 13 }}>Фраза з 6 слів, яку вам передали окремо від файлу
+                <input className="input mono" value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="six words like this one here" />
+              </label>
+              {errorLine}
+              <div className="row" style={{ gap: 10 }}>
+                <button className="btn primary" type="submit" disabled={busy || !packFile || phrase.trim().split(/\s+/).length !== 6}>{busy ? "Відкриваю…" : "Відкрити"}</button>
+                <button className="btn quiet" type="button" onClick={() => go("list")}>Скасувати</button>
+              </div>
+            </form>
+          ) : (
+            <div className="stack" style={{ gap: 12, fontSize: 13, lineHeight: 1.6 }}>
+              <span>{pack.kind === "supervisor" ? "Пакет для супервайзера(ки)" : "Копія проєкту"} <b style={{ fontWeight: 600 }}>«{pack.project.name}»</b> ({pack.project.method}) від <b style={{ fontWeight: 600 }}>{pack.from.name}</b>, надіслано {new Date(pack.sent).toLocaleDateString("uk-UA")}{pack.stage ? `, етап: ${pack.stage}` : ""}.</span>
+              <span>Інтерв'ю: {pack.data.interviews.length} · кодів: {pack.data.codes.length}{pack.blind ? " · без кодування власника(ці) — для сліпого кодування" : ""}.</span>
+              <span className="small">Копія стане вашим проєктом, зашифрованим вашим паролем. У ній транскрипти лише із замінами; кодувати й коментувати можна, змінювати текст — лише власник(ця).</span>
+              {errorLine}
+              <div className="row" style={{ gap: 10 }}>
+                <button className="btn primary" disabled={busy} onClick={addPack}>Додати до моїх проєктів</button>
+                <button className="btn quiet" onClick={() => go("list")}>Скасувати</button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
       {view === "restore" && (
         <section className="card wide" aria-label="Відкрити резервну копію">
           <h2>Відкрити резервну копію</h2>

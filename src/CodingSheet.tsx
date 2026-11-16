@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { pieces, quote, snap, type App, type Code } from "./coding";
 import { applyDict, insertMark, MARK_RE, TX_MARKS, wordKey, type Role, type Segment } from "./text";
-import { noteKey, speaker, type Interview, type Note, type Private } from "./model";
+import { initialsOf, type Person, noteKey, speaker, type Interview, type Note, type Private } from "./model";
 
 type Sel = { rep: number; s: number; e: number; x: number; y: number };
 
@@ -106,7 +106,7 @@ function offsetAt(node: Node, offset: number, end: boolean): { rep: number; o: n
 }
 
 function Popup(props: {
-  sel: Sel; iv: Interview; segs: Segment[]; codes: Code[]; apps: App[]; me: string;
+  sel: Sel; iv: Interview; segs: Segment[]; codes: Code[]; apps: App[]; me: string; people?: Record<string, Person>;
   act: CodingActions; close: () => void;
 }) {
   const { sel, codes, me, act } = props;
@@ -148,7 +148,7 @@ function Popup(props: {
             <div className="row" key={a.id} style={{ flexWrap: "nowrap", minHeight: 32 }}>
               <span className="sw" style={{ background: name(a.code)?.color }} aria-hidden="true" />
               <span className="grow" style={{ fontSize: 13 }}>{name(a.code)?.name}</span>
-              <span className="small">{a.by}</span>
+              <span className="small">{initialsOf(props, a.by)}</span>
               {a.by === me && <button className="x" aria-label={`Прибрати мій код «${name(a.code)?.name}»`} title="Прибрати мій код" onClick={() => act.removeApps([a.id])}>✕</button>}
             </div>
           ))}
@@ -210,7 +210,7 @@ const CAP = /(\p{Lu}[\p{Ll}'’ʼ-]*\p{Ll}|\p{Lu}{2,6})/gu;
 export default function CodingSheet(props: {
   iv: Interview; priv: Private; codes: Code[]; apps: App[]; notes: Record<string, Note>; me: string;
   original: boolean; underlines: boolean; focus: string | null; flagged: Set<string>; act: CodingActions; target?: number | null;
-  seek?: (t: string) => void; nowRep?: number | null; edit?: EditActions;
+  seek?: (t: string) => void; nowRep?: number | null; edit?: EditActions; people?: Record<string, Person>;
 }) {
   const { iv, priv, codes, original, focus } = props;
   const [sel, setSel] = useState<Sel | null>(null);
@@ -310,7 +310,7 @@ export default function CodingSheet(props: {
         );
       })}
       {sel && (
-        <Popup sel={sel} iv={iv} segs={segsOf(sel.rep)} codes={codes} apps={props.apps} me={props.me} act={props.act}
+        <Popup sel={sel} iv={iv} segs={segsOf(sel.rep)} codes={codes} apps={props.apps} me={props.me} people={props.people} act={props.act}
           close={() => { setSel(null); window.getSelection()?.removeAllRanges(); }} />
       )}
     </article>

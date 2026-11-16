@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
+mod pack;
 mod project;
 mod textfile;
 mod transcribe;
@@ -588,6 +589,50 @@ async fn save_project(app: AppHandle, state: State<'_, AppState>, id: String, da
     })
 }
 
+// ---------- exchange packages (step 3.1) ----------
+
+fn logged_in(state: &AppState) -> Res<()> {
+    state.session.lock().unwrap().as_ref().map(|_| ()).ok_or_else(|| "locked".into())
+}
+
+/// Writes a package (built by the window from the shared part only) and returns its 6 words.
+#[tauri::command]
+async fn make_pack(state: State<'_, AppState>, path: String, body: serde_json::Value) -> Res<Vec<String>> {
+    logged_in(&state)?;
+    pack::write(std::path::Path::new(&path), &body)
+}
+
+#[tauri::command]
+async fn open_pack(state: State<'_, AppState>, path: String, phrase: String) -> Res<serde_json::Value> {
+    logged_in(&state)?;
+    pack::read(std::path::Path::new(&path), &phrase)
+}
+
+/// A received copy becomes this person's own encrypted project.
+#[tauri::command]
+async fn create_copy_project(app: AppHandle, state: State<'_, AppState>, name: String, method: String, data: serde_json::Value, private: serde_json::Value) -> Res<Entry> {
+    let name = name.trim().to_string();
+    if name.is_empty() || name.chars().count() > 200 || !["ІФА", "Дескр.", "РТА"].contains(&method.as_str()) {
+        return Err("bad_input".into());
+    }
+    let d = projects_dir(&app)?;
+    std::fs::create_dir_all(&d).map_err(io)?;
+    let t = now();
+    let content = Content { name: name.clone(), method, student: None, created: t, modified: t, data };
+    with_profile(&app, &state, |p, master| {
+        let (mut f, _) = ProjectFile::create(p, master, &content);
+        let pk = f.project_key(master).ok_or("wrong")?;
+        f.set_private(&pk, &private);
+        let path = project::free_path(&d, &project::file_stem(&name), "qda");
+        f.write(&path).map_err(io)?;
+        let e = entry_of(&f, &content, &path, None);
+        let mut list = project::entries(p, master);
+        list.push(e.clone());
+        project::set_entries(p, master, &list);
+        Ok(e)
+    })
+}
+
 // ---------- audio (step 2.1) ----------
 
 /// The recording chosen for an interview: returns its fingerprint and lets the window play it.
@@ -730,7 +775,10 @@ fn main() {
             start_transcription,
             transcription_status,
             cancel_transcription,
-            export_docx
+            export_docx,
+            make_pack,
+            open_pack,
+            create_copy_project
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

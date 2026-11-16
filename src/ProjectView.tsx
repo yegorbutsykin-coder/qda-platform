@@ -4,12 +4,13 @@ import Player, { seconds } from "./Player";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { applyDict, guessRole, parseTranscript, segmentsToReplicas, suspects, type Role, type TxSegment } from "./text";
 import Compare, { LANGS } from "./Compare";
+import Share from "./Share";
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
 import Codebook from "./Codebook";
 import CodesPanel from "./CodesPanel";
 import { dropReplica, nextColor, quote, remapApps, splitReplica, statuses, type Code } from "./coding";
 import { applyDict as segsFor } from "./text";
-import { emptyPrivate, emptyShared, GENDERS, newId, noteKey, pad, rebuild, speaker, type Tx, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
+import { adoptPeople, emptyPrivate, emptyShared, ensureIds, initialsOf, type Person, GENDERS, newId, noteKey, pad, rebuild, speaker, type Tx, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
 import Dictionary from "./Dictionary";
 
 type Meta = { name: string; method: string; student: { work: string; supervisor: string } | null };
@@ -108,12 +109,14 @@ function CardForm(props: {
 
 // ---------- the project ----------
 
-export default function ProjectView(props: { id: string; me: string; onBack: () => void }) {
+const NONE = new Set<string>();
+
+export default function ProjectView(props: { id: string; me: Person & { id: string }; onBack: () => void }) {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [shared, setShared] = useState<Shared>(emptyShared());
   const [priv, setPriv] = useState<Private>(emptyPrivate());
   const [error, setError] = useState("");
-  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare">("main");
+  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share">("main");
   const [focus, setFocus] = useState<string | null>(null);
   const [underlines, setUnderlines] = useState(true);
   const [leftTab, setLeftTab] = useState<"iv" | "codes">("iv");
@@ -133,9 +136,14 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
     invoke<Loaded>("load_project", { id: props.id })
       .then((r) => {
         setMeta(r.content);
-        const s = { ...emptyShared(), ...(r.content.data ?? {}) };
-        const p = { ...emptyPrivate(), ...(r.private ?? {}) };
-        setShared(s); setPriv(p);
+        const s0 = { ...emptyShared(), ...(r.content.data ?? {}) };
+        const s = adoptPeople(s0, props.me);
+        const p0 = { ...emptyPrivate(), ...(r.private ?? {}) };
+        const p = ensureIds(p0);
+        const s1 = p === p0 ? s : rebuild(s, p);
+        setShared(s1); setPriv(p);
+        // Older project: keep the new replica ids and authors at once, so they are the same next time.
+        if (p !== p0 || s !== s0) invoke("save_project", { id: props.id, data: s1, private: p }).catch((e) => setError(`Не вдалося зберегти: ${e}`));
         setSel(s.interviews[0]?.id ?? "");
         // Recordings stay where they are: check each one and let the window play it.
         for (const [id, a] of Object.entries(p.audio)) {
@@ -147,7 +155,8 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   }, [props.id]);
 
   /** Every change: recompute replaced texts, show at once, save in order. */
-  function commit(s: Shared, p: Private) {
+  function commit(s: Shared, p0: Private) {
+    const p = ensureIds(p0);
     // Texts with replacements depend only on the originals and the dictionary: skip the work otherwise.
     const rebuilt = p === priv && s.interviews === shared.interviews ? s : rebuild(s, p);
     setShared(rebuilt); setPriv(p);
@@ -172,6 +181,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
     () => suspects(shared.interviews.flatMap((x) => (priv.originals[x.id] ?? []).map((r) => ({ id: x.id, segs: applyDict(r.text, priv.dict, x.id) }))), priv.ignored),
     [shared.interviews, priv],
   );
+  const copy = shared.copyOf;
   const flagged = new Set(allSuspects.filter((s) => !iv || s.interviews.includes(iv.id)).map((s) => s.key));
   const ivSuspects = allSuspects.filter((s) => iv && s.interviews.includes(iv.id));
 
@@ -362,7 +372,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
   };
 
   // ----- coding -----
-  const me = props.me;
+  const me = props.me.id;
   const act: CodingActions = {
     apply(code, rep, s, e) {
       // The same code on an overlapping piece by the same person: widen it instead of doubling.
@@ -471,11 +481,22 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
               <span className="title">{meta.name}</span>
             </div>
             <div className="grow" />
-            <button className="btn sm" onClick={() => setView("dict")}>
-              Словник замін · {priv.dict.length}{allSuspects.length > 0 && <span className="badge" title="Слова, схожі на імена, ще не замінені">{allSuspects.length}</span>}
-            </button>
-            <button className="btn sm primary" onClick={startAdd}>+ Додати інтерв'ю</button>
+            {copy ? null : (
+              <>
+                <button className="btn sm" onClick={() => setView("share")} disabled={!shared.interviews.length}>Поділитися…</button>
+                <button className="btn sm" onClick={() => setView("dict")}>
+                  Словник замін · {priv.dict.length}{allSuspects.length > 0 && <span className="badge" title="Слова, схожі на імена, ще не замінені">{allSuspects.length}</span>}
+                </button>
+                <button className="btn sm primary" onClick={startAdd}>+ Додати інтерв'ю</button>
+              </>
+            )}
           </div>
+          {copy && (
+            <div className="warnline" style={{ borderStyle: "solid" }}>
+              {copy.kind === "supervisor" ? "Пакет для супервайзера(ки)" : "Копія"} від <b>{copy.from.name}</b>, надіслано {new Date(copy.sent).toLocaleDateString("uk-UA")}{copy.stage ? ` · етап: ${copy.stage}` : ""}{copy.blind ? " · без кодування власника(ці)" : ""}.
+              {" "}Тут можна кодувати й коментувати; текст транскриптів і картки змінює лише власник(ця) проєкту.
+            </div>
+          )}
           {errorLine}
           {shared.interviews.length === 0 ? (
             <div className="empty">
@@ -506,28 +527,32 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                     {iv.card.date && <span className="mono">{new Date(iv.card.date).toLocaleDateString("uk-UA")}</span>}
                     {shared.fields.map((f) => <span key={f.id}>{f.name}: {fieldVal(f, iv.card)}</span>)}
                     <span className="grow" />
-                    {!iv.tx && (editing ? <button className="btn sm primary" onClick={() => setEditing(false)}>Готово</button>
+                    {!iv.tx && !copy && (editing ? <button className="btn sm primary" onClick={() => setEditing(false)}>Готово</button>
                       : <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={() => setEditing(true)}>Редагувати текст</button>)}
                     {!iv.tx && <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={exportWord}>Експорт у Word</button>}
-                    <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={editCard}>Змінити картку</button>
+                    {!copy && <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={editCard}>Змінити картку</button>}
                   </div>
                   <div className="row" style={{ gap: "8px 16px" }}>
-                    <div className="seg" role="group" aria-label="Який текст показувати">
-                      <button aria-pressed={!original} onClick={() => setOriginal(false)}>Із замінами</button>
-                      <button aria-pressed={original} onClick={() => setOriginal(true)}>Оригінал</button>
-                    </div>
-                    <span className="small grow">{original ? "Справжні слова бачите лише ви." : "Так текст бачитимуть колеги й супервайзер(ка)."}</span>
+                    {copy ? <span className="small grow">Текст із замінами — оригіналу в копії немає.</span> : (
+                      <>
+                        <div className="seg" role="group" aria-label="Який текст показувати">
+                          <button aria-pressed={!original} onClick={() => setOriginal(false)}>Із замінами</button>
+                          <button aria-pressed={original} onClick={() => setOriginal(true)}>Оригінал</button>
+                        </div>
+                        <span className="small grow">{original ? "Справжні слова бачите лише ви." : "Так текст бачитимуть колеги й супервайзер(ка)."}</span>
+                      </>
+                    )}
                     <div className="seg" role="group" aria-label="Колір підкреслень">
                       <button aria-pressed={!byCat} onClick={() => setByCat(false)}>Мікрокоди</button>
                       <button aria-pressed={byCat} onClick={() => setByCat(true)}>Категорії</button>
                     </div>
                     <label className="check" style={{ fontSize: 12 }}><input type="checkbox" checked={underlines} onChange={(e) => setUnderlines(e.target.checked)} /><span>Підкреслення</span></label>
                   </div>
-                  {ivSuspects.length > 0 && (
+                  {ivSuspects.length > 0 && !copy && (
                     <div className="warnline">Ще не замінено: {ivSuspects.slice(0, 8).map((s) => `«${s.word}»`).join(", ")}{ivSuspects.length > 8 ? "…" : ""}. Колеги бачать ці слова як є.{" "}
                       <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={() => setView("dict")}>До словника замін →</button></div>
                   )}
-                  {iv.audio === "deleted" ? (
+                  {copy ? null : iv.audio === "deleted" ? (
                     <div className="audioline">
                       <span className="grow small">Запис видалено після звірки транскрипту.</span>
                       <button className="link" style={{ fontSize: 12 }} onClick={pickAudio}>Вказати файл запису…</button>
@@ -582,15 +607,15 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                       )}
                     </div>
                   ) : (
-                  <CodingSheet iv={iv} priv={priv} codes={byCat ? shared.codes.map((c) => ({ ...c, color: shared.cats.find((k) => k.id === c.cat)?.color ?? c.color })) : shared.codes} apps={shared.apps} notes={shared.notes} me={me} original={original}
-                    underlines={underlines} focus={focus} flagged={flagged} act={act} target={target}
+                  <CodingSheet iv={iv} priv={priv} codes={byCat ? shared.codes.map((c) => ({ ...c, color: shared.cats.find((k) => k.id === c.cat)?.color ?? c.color })) : shared.codes} apps={shared.apps} notes={shared.notes} me={me} people={shared.people} original={original}
+                    underlines={underlines} focus={focus} flagged={copy ? NONE : flagged} act={act} target={target}
                     seek={priv.audio[iv.id] && audioState[iv.id] === "ok" ? seek : undefined} nowRep={nowRep} edit={editing ? edit : undefined} />
                   )}
-                  <div className="legend small">
+                  {!copy && <div className="legend small">
                     <span><mark className="repl">[ім'я]</mark> замінено за словником</span>
                     <span><mark className="orig">Оксана</mark> справжнє слово (лише в «Оригіналі»)</span>
                     <span><mark className="suspect">Андрій</mark> схоже на ім'я, ще не замінено</span>
-                  </div>
+                  </div>}
                 </section>
               )}
             </div>
@@ -598,6 +623,10 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
         </>
       )}
 
+      {view === "share" && (
+        <Share shared={shared} projectId={props.id} name={meta.name} method={meta.method} me={props.me}
+          suspects={allSuspects.map((x) => x.word)} onBack={() => setView("main")} toDict={() => setView("dict")} />
+      )}
       {view === "compare" && audioFile && (
         <Compare path={audioFile} models={models} onBack={() => setView("add")}
           onChoose={(m, l) => {
@@ -707,7 +736,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
       )}
 
       {view === "main" && shared.interviews.length > 0 && (
-        <Codebook codes={shared.codes} apps={shared.apps} focus={focus} setFocus={setFocus}
+        <Codebook people={shared.people} codes={shared.codes} apps={shared.apps} focus={focus} setFocus={setFocus}
           rename={(id, name) => patchCode(id, { name })} recolor={(id, color) => patchCode(id, { color })}
           setNote={(id, note) => patchCode(id, { note })} remove={removeCode} showFragments={(id) => { setFocus(id); setView("frags"); }} />
       )}
@@ -728,7 +757,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
                 <div className="stack" style={{ gap: 3, flex: "0 0 150px" }}>
                   <span className="mono" style={{ fontSize: 13, fontWeight: 500 }}>{pad(x.n)} · {x.card.pseudonym}</span>
                   <span className="mono small">{r.t ?? ""}</span>
-                  <span className="small">{a.by}</span>
+                  <span className="small">{initialsOf(shared, a.by)}</span>
                 </div>
                 <p className="mono grow" style={{ fontSize: 14, lineHeight: 1.8, minWidth: 0 }}>«{quote(segsFor(r.text, priv.dict, x.id), a.s, a.e)}»</p>
                 <button className="btn sm quiet" style={{ alignSelf: "flex-start" }} onClick={() => goContext(x.id, a.rep)}>У контексті →</button>

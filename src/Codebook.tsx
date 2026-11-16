@@ -1,3 +1,4 @@
+import { initialsOf, type Person } from "./model";
 import { useEffect, useRef, useState } from "react";
 import type { App, Code } from "./coding";
 
@@ -18,6 +19,7 @@ export default function Codebook(props: {
   codes: Code[]; apps: App[]; focus: string | null; setFocus: (id: string | null) => void;
   rename: (id: string, name: string) => void; recolor: (id: string, color: string) => void;
   setNote: (id: string, note: string) => void; remove: (c: Code) => void; showFragments: (id: string) => void;
+  people?: Record<string, Person>;
 }) {
   // Bottom-left by default (the right edge holds the comments); place and size are remembered.
   const [box, setBox] = useState<Box>(() => {
@@ -102,7 +104,7 @@ export default function Codebook(props: {
                 onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== f.name && props.rename(f.id, e.target.value.trim())}
                 onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />
             </div>
-            <span className="small">{fApps.length} фрагм. · {new Set(fApps.map((a) => a.iv)).size} інтерв'ю · створив(ла) {f.by}</span>
+            <span className="small">{fApps.length} фрагм. · {new Set(fApps.map((a) => a.iv)).size} інтерв'ю · створив(ла) {initialsOf(props, f.by)}</span>
             <label className="field"><span className="label">Попередня інтерпретація</span>
               <textarea key={f.id} className="input mono" rows={3} style={{ fontSize: 12 }} defaultValue={f.note ?? ""}
                 onBlur={(e) => e.target.value !== (f.note ?? "") && props.setNote(f.id, e.target.value)} /></label>

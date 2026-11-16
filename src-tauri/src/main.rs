@@ -605,6 +605,22 @@ async fn delete_project(app: AppHandle, state: State<'_, AppState>, id: String) 
     })
 }
 
+/// A figure from the visual analysis: SVG text or PNG bytes (base64), to a file the person chose.
+#[tauri::command]
+async fn save_figure(path: String, svg: Option<String>, png: Option<String>) -> Res<()> {
+    use base64::Engine;
+    let p = PathBuf::from(&path);
+    let ext = p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase());
+    let bytes = match (ext.as_deref(), svg, png) {
+        (Some("svg"), Some(t), None) => t.into_bytes(),
+        (Some("png"), None, Some(b)) => base64::engine::general_purpose::STANDARD.decode(b).map_err(|_| "bad_input")?,
+        _ => return Err("bad_input".into()),
+    };
+    let tmp = p.with_extension("part");
+    std::fs::write(&tmp, bytes).map_err(io)?;
+    std::fs::rename(&tmp, &p).map_err(io)
+}
+
 // ---------- exchange packages (step 3.1) ----------
 
 fn logged_in(state: &AppState) -> Res<()> {
@@ -795,7 +811,8 @@ fn main() {
             make_pack,
             open_pack,
             create_copy_project,
-            delete_project
+            delete_project,
+            save_figure
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

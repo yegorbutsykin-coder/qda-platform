@@ -6,6 +6,7 @@ import { applyDict, guessRole, parseTranscript, segmentsToReplicas, suspects, ty
 import Compare, { LANGS } from "./Compare";
 import Share from "./Share";
 import Merge, { PackPicker } from "./Merge";
+import Analysis from "./Analysis";
 import { RemarksView, Remark, type RemarkPatch, type RemarkRow } from "./Remarks";
 import { updateCopy } from "./exchange";
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
@@ -119,7 +120,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const [shared, setShared] = useState<Shared>(emptyShared());
   const [priv, setPriv] = useState<Private>(emptyPrivate());
   const [error, setError] = useState("");
-  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share" | "merge" | "remarks" | "update">("main");
+  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share" | "merge" | "remarks" | "update" | "analysis">("main");
   const [focus, setFocus] = useState<string | null>(null);
   const [underlines, setUnderlines] = useState(true);
   const [leftTab, setLeftTab] = useState<"iv" | "codes">("iv");
@@ -524,6 +525,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
               <span className="title">{meta.name}</span>
             </div>
             <div className="grow" />
+            {shared.apps.length > 0 && <button className="btn sm" onClick={() => setView("analysis")}>Візуальний аналіз</button>}
             {remarkRows.length > 0 && <button className="btn sm" onClick={() => setView("remarks")}>Зауваження · {openRemarks}</button>}
             {copy ? (
               <>
@@ -708,6 +710,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
         <Share shared={shared} priv={priv} projectId={props.id} name={meta.name} method={meta.method} me={props.me}
           suspects={allSuspects.map((x) => x.word)} onBack={() => setView("main")} toDict={() => setView("dict")} />
       )}
+      {view === "analysis" && <Analysis shared={shared} me={me} onBack={() => setView("main")} />}
       {view === "remarks" && (
         <RemarksView rows={remarkRows} me={me} who={who} set={setRemark} onBack={() => setView("main")} />
       )}

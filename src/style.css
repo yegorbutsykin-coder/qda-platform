@@ -275,3 +275,14 @@ textarea.edittext { resize: none; }
 /* step 3.6: new codes and saturation */
 .satline { font-size: 11px; color: var(--accent); text-align: center; border-top: 1px dashed var(--accent); margin: 4px 0 6px; padding-top: 2px; }
 .satbox { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line2); }
+
+/* stage 4: visual analysis */
+.analysis { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 28px; align-items: start; }
+.atools { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 12px; }
+.atool { text-align: left; background: none; border: 0; border-left: 2px solid transparent; padding: 5px 10px; font: inherit; font-size: 13px; color: var(--ink); cursor: pointer; }
+.atool.on { border-left-color: var(--accent); background: var(--panel); font-weight: 500; }
+.atool:disabled { color: var(--faint); cursor: default; }
+.afilters { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid var(--line2); }
+.afig { background: #fff; border: 1px solid var(--line2); padding: 16px; overflow: auto; }
+.chip { font: 12px var(--mono); border: 1px solid var(--line); background: none; padding: 2px 7px; cursor: pointer; color: var(--muted); }
+.chip.on { border-color: var(--ink); color: var(--ink); background: var(--panel); }

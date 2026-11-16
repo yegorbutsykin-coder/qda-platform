@@ -700,7 +700,7 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
         </section>
       )}
 
-      {view === "main" && leftTab === "iv" && shared.interviews.length > 0 && (
+      {view === "main" && shared.interviews.length > 0 && (
         <Codebook codes={shared.codes} apps={shared.apps} focus={focus} setFocus={setFocus}
           rename={(id, name) => patchCode(id, { name })} recolor={(id, color) => patchCode(id, { color })}
           setNote={(id, note) => patchCode(id, { note })} remove={removeCode} showFragments={(id) => { setFocus(id); setView("frags"); }} />

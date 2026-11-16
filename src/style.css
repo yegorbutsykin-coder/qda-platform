@@ -182,7 +182,7 @@ mark.suspect { background: transparent; border-bottom: 2px dashed var(--accent);
 .stdot.none { border: 1px dashed #8A877F; }
 .stdot.existing { border: 1px solid var(--ink); }
 .stdot.new { background: var(--ink); }
-.codebook { position: fixed; z-index: 30; width: 300px; height: 420px; min-width: 220px; min-height: 160px; max-height: 85vh; resize: both; overflow: hidden; display: flex; flex-direction: column; background: #FFFFFF; border: 1px solid var(--ink); border-radius: 3px; box-shadow: 0 10px 30px rgba(30,30,28,0.14); }
+.codebook { position: fixed; z-index: 30; overflow: visible; display: flex; flex-direction: column; background: #FFFFFF; border: 1px solid var(--ink); border-radius: 3px; box-shadow: 0 10px 30px rgba(30,30,28,0.14); }
 .cbhead { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line3); background: var(--bar); cursor: grab; user-select: none; touch-action: none; }
 .cbbody { flex: 1 1 auto; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
 .cbcard { margin-top: 8px; padding: 10px; border-top: 1px solid var(--line3); display: flex; flex-direction: column; gap: 8px; }
@@ -246,3 +246,12 @@ mark.suspect { background: transparent; border-bottom: 2px dashed var(--accent);
 .cmptext { max-height: 440px; overflow: auto; font-size: 13px; line-height: 1.7; border-top: 1px solid var(--line2); padding-top: 8px; }
 .cmptext p { margin: 0 0 8px; overflow-wrap: anywhere; }
 .cmptext .tc { color: var(--muted); font-size: 11px; }
+
+/* resize the floating code book by any edge or corner */
+.cbedge { position: absolute; z-index: 2; touch-action: none; }
+.cbedge.n, .cbedge.s { left: 8px; right: 8px; height: 8px; cursor: ns-resize; }
+.cbedge.e, .cbedge.w { top: 8px; bottom: 8px; width: 8px; cursor: ew-resize; }
+.cbedge.n { top: -4px; } .cbedge.s { bottom: -4px; } .cbedge.e { right: -4px; } .cbedge.w { left: -4px; }
+.cbedge.ne, .cbedge.nw, .cbedge.se, .cbedge.sw { width: 14px; height: 14px; }
+.cbedge.ne { top: -5px; right: -5px; cursor: nesw-resize; } .cbedge.sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.cbedge.nw { top: -5px; left: -5px; cursor: nwse-resize; } .cbedge.se { bottom: -5px; right: -5px; cursor: nwse-resize; }

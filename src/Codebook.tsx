@@ -1,42 +1,65 @@
 import { useEffect, useRef, useState } from "react";
 import type { App, Code } from "./coding";
 
-type Pos = { x: number; y: number };
+type Box = { x: number; y: number; w: number; h: number };
 const POS_KEY = "qda-codebook-pos";
 const FOLD_KEY = "qda-codebook-folded";
-const clamp = (p: Pos): Pos => ({ x: Math.min(Math.max(0, p.x), window.innerWidth - 120), y: Math.min(Math.max(60, p.y), window.innerHeight - 40) });
+const MIN_W = 220, MIN_H = 160;
+const lim = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+const fit = (b: Box): Box => ({
+  w: lim(b.w, MIN_W, window.innerWidth - 16), h: lim(b.h, MIN_H, window.innerHeight - 76),
+  x: lim(b.x, 0, window.innerWidth - 120), y: lim(b.y, 60, window.innerHeight - 40),
+});
+// Which edges each handle moves: n/s/e/w and corners.
+const EDGES = ["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const;
 
-/** Floating code book over the transcript: move by the handle, resize by the corner, fold into a chip. */
+/** Floating code book: move by the handle, resize by any edge or corner, fold into a chip. */
 export default function Codebook(props: {
   codes: Code[]; apps: App[]; focus: string | null; setFocus: (id: string | null) => void;
   rename: (id: string, name: string) => void; recolor: (id: string, color: string) => void;
   setNote: (id: string, note: string) => void; remove: (c: Code) => void; showFragments: (id: string) => void;
 }) {
-  // Bottom-left by default (the right edge holds the comments); remembered where the person puts it.
-  const [pos, setPos] = useState<Pos>(() => {
-    try { const p = JSON.parse(localStorage.getItem(POS_KEY) ?? ""); if (typeof p.x === "number") return clamp(p); } catch { /* first time */ }
-    return clamp({ x: 16, y: window.innerHeight - 440 });
+  // Bottom-left by default (the right edge holds the comments); place and size are remembered.
+  const [box, setBox] = useState<Box>(() => {
+    const first = { x: 16, y: window.innerHeight - 440, w: 300, h: 420 };
+    try { const p = JSON.parse(localStorage.getItem(POS_KEY) ?? ""); if (typeof p.x === "number") return fit({ ...first, ...p }); } catch { /* first time */ }
+    return fit(first);
   });
   const [folded, setFolded] = useState(() => { try { return localStorage.getItem(FOLD_KEY) === "1"; } catch { return false; } });
   const fold = (v: boolean) => { setFolded(v); try { localStorage.setItem(FOLD_KEY, v ? "1" : "0"); } catch { /* not kept */ } };
-  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const drag = useRef<{ edge: string; sx: number; sy: number; start: Box } | null>(null);
   const moved = useRef(false);
 
   useEffect(() => {
     const move = (e: PointerEvent) => {
-      if (!drag.current) return;
+      const d = drag.current;
+      if (!d) return;
       moved.current = true;
-      setPos(clamp({ x: e.clientX - drag.current.dx, y: e.clientY - drag.current.dy }));
+      const dx = e.clientX - d.sx, dy = e.clientY - d.sy, s = d.start;
+      if (d.edge === "move") { setBox(fit({ ...s, x: s.x + dx, y: s.y + dy })); return; }
+      const b = { ...s };
+      if (d.edge.includes("e")) b.w = s.w + dx;
+      if (d.edge.includes("s")) b.h = s.h + dy;
+      // Left and top edges move the box too, keeping the opposite edge in place.
+      if (d.edge.includes("w")) { b.w = Math.max(MIN_W, s.w - dx); b.x = s.x + s.w - b.w; }
+      if (d.edge.includes("n")) { b.h = Math.max(MIN_H, s.h - dy); b.y = s.y + s.h - b.h; }
+      setBox(fit(b));
     };
     const up = () => {
-      if (drag.current) setPos((p) => { try { localStorage.setItem(POS_KEY, JSON.stringify(p)); } catch { /* not kept */ } return p; });
+      if (drag.current) setBox((b) => { try { localStorage.setItem(POS_KEY, JSON.stringify(b)); } catch { /* not kept */ } return b; });
       drag.current = null;
+      document.body.style.userSelect = "";
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
   }, []);
-  const grab = (e: React.PointerEvent) => { moved.current = false; drag.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y }; };
+  const grab = (edge: string) => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    moved.current = false;
+    drag.current = { edge, sx: e.clientX, sy: e.clientY, start: box };
+    document.body.style.userSelect = "none"; // no text gets selected while resizing
+  };
 
   const count = (id: string) => props.apps.filter((a) => a.code === id).length;
   const sorted = [...props.codes].sort((a, b) => a.name.localeCompare(b.name, "uk"));
@@ -45,15 +68,16 @@ export default function Codebook(props: {
 
   if (folded) {
     return (
-      <button className="cbchip" style={{ left: pos.x, top: pos.y }} onPointerDown={grab}
+      <button className="cbchip" style={{ left: box.x, top: box.y }} onPointerDown={grab("move")}
         onClick={() => { if (!moved.current) fold(false); }} aria-label="Розгорнути кодову книгу">
         Кодова книга · {props.codes.length} {props.codes.length === 1 ? "код" : "кодів"}
       </button>
     );
   }
   return (
-    <section className="codebook" style={{ left: pos.x, top: pos.y }} aria-label="Кодова книга">
-      <div className="cbhead" onPointerDown={grab} title="Перетягніть, щоб перемістити">
+    <section className="codebook" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} aria-label="Кодова книга">
+      {EDGES.map((e) => <div key={e} className={"cbedge " + e} onPointerDown={grab(e)} aria-hidden="true" />)}
+      <div className="cbhead" onPointerDown={grab("move")} title="Перетягніть, щоб перемістити; розмір — за будь-який край">
         <span className="label" style={{ color: "var(--ink)" }}>Кодова книга · {props.codes.length}</span>
         <span className="grow" />
         <button className="x" aria-label="Згорнути кодову книгу" onPointerDown={(e) => e.stopPropagation()} onClick={() => fold(true)}>–</button>

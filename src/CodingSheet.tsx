@@ -9,7 +9,7 @@ export type CodingActions = {
   apply: (code: string, rep: number, s: number, e: number) => void;
   create: (name: string, rep: number, s: number, e: number) => void;
   removeApps: (ids: string[]) => void;
-  setNote: (rep: number, text: string) => void;
+  setNote: (rep: number, text: string, counter?: boolean) => void;
 };
 
 export type EditActions = {
@@ -172,7 +172,7 @@ function Popup(props: {
   );
 }
 
-function NoteCell(props: { note?: Note; others: Note[]; who: (by: string) => string; t: string | null; me: string; save: (text: string) => void }) {
+function NoteCell(props: { note?: Note; others: Note[]; who: (by: string) => string; t: string | null; me: string; save: (text: string, counter?: boolean) => void }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(props.note?.text ?? "");
   const timer = useRef<number | undefined>(undefined);
@@ -186,9 +186,9 @@ function NoteCell(props: { note?: Note; others: Note[]; who: (by: string) => str
   return (
     <div className="notecell">
       {props.others.filter((n) => n.text.trim()).map((n, k) => (
-        <p key={k} className="noteclamp other" title={n.text}><span className="mono small">{props.who(n.by)}</span> {n.text}</p>
+        <p key={k} className="noteclamp other" title={n.text}><span className="mono small">{props.who(n.by)}</span>{n.counter && <span className="ctag"> ↯ контрінтуїтивне</span>} {n.text}</p>
       ))}
-      {props.note?.text && <p className="noteclamp">{props.note.text}</p>}
+      {props.note?.text && <p className="noteclamp">{props.note.counter && <span className="ctag">↯ контрінтуїтивне </span>}{props.note.text}</p>}
       <button className="notebtn" onClick={() => setOpen(true)}>{props.note?.text ? "Розгорнути" : "+ Коментар"}</button>
       {open && (
         <div className="notecard" role="dialog" aria-label="Коментар">
@@ -198,6 +198,11 @@ function NoteCell(props: { note?: Note; others: Note[]; who: (by: string) => str
           </div>
           <textarea className="input mono" rows={9} autoFocus value={draft} placeholder="Попередня інтерпретація, асоціації, питання до тексту…" aria-label="Текст коментаря"
             onChange={(e) => change(e.target.value)} onKeyDown={(e) => e.key === "Escape" && done()} />
+          <label className="check" style={{ fontSize: 12 }}>
+            <input type="checkbox" checked={!!props.note?.counter} disabled={!draft.trim()}
+              onChange={(e) => { window.clearTimeout(timer.current); props.save(draft, e.target.checked); }} />
+            <span>Контрінтуїтивне прочитання — тлумачення всупереч очевидному</span>
+          </label>
           <div className="row" style={{ justifyContent: "space-between" }}>
             <span className="small">{props.me} · зберігається автоматично</span>
             <button className="btn sm primary" onClick={done}>Готово</button>
@@ -315,7 +320,7 @@ export default function CodingSheet(props: {
               })}
             </p>
             <NoteCell note={(byRep.get(i) ?? []).find((n) => n.by === props.me)} others={(byRep.get(i) ?? []).filter((n) => n.by !== props.me)}
-              who={(by) => initialsOf(props, by)} t={r.t} me={initialsOf(props, props.me)} save={(text) => props.act.setNote(i, text)} />
+              who={(by) => initialsOf(props, by)} t={r.t} me={initialsOf(props, props.me)} save={(text, counter) => props.act.setNote(i, text, counter)} />
           </div>
         );
       })}

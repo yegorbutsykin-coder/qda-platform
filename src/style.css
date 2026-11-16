@@ -262,3 +262,4 @@ mark.suspect { background: transparent; border-bottom: 2px dashed var(--accent);
 .marksbar .btn.sm { font-family: var(--mono); font-size: 12px; }
 textarea.edittext { resize: none; }
 .noteclamp.other { color: var(--muted); border-left: 2px solid var(--line); padding-left: 6px; margin-bottom: 4px; }
+.ctag { color: var(--accent); font-size: 11px; font-family: Inter, sans-serif; }

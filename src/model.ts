@@ -11,7 +11,8 @@ export type SharedReplica = { id?: string; t: string | null; role: Role | null; 
 export type Tx = { state: "running" | "error" | "interrupted"; model: string; lang: string; error?: string };
 export type Interview = { id: string; n: number; card: Card; replicas: SharedReplica[]; added: number; audio?: "kept" | "deleted"; tx?: Tx };
 export type AudioRef = { path: string; fp: string; name: string };
-export type Note = { text: string; by: string; at: number };
+/** `counter`: marked as a counter-intuitive reading (stage 3.4). */
+export type Note = { text: string; by: string; at: number; counter?: boolean };
 /** A researcher in the project: codes, coding and comments carry their profile id in `by`. */
 export type Person = { name: string; initials: string };
 export type Shared = { fields: Field[]; interviews: Interview[]; codes: Code[]; apps: App[]; notes: Record<string, Note>; cats: Cat[]; supers: Super[]; levels?: Levels; people?: Record<string, Person>; copyOf?: CopyOf };

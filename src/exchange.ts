@@ -13,7 +13,7 @@ export type ReturnBody = {
   codes: Code[];
   /** Coding by `from`, placed by replica id. */
   apps: (Omit<App, "iv" | "rep"> & { rid: string })[];
-  notes: { rid: string; text: string; at: number }[];
+  notes: { rid: string; text: string; at: number; counter?: boolean }[];
   /** The text each replica had in the copy, to follow the owner's later edits. */
   texts: Record<string, string>;
 };
@@ -32,7 +32,7 @@ export function buildReturn(s: Shared, p: Private, me: Person & { id: string }):
     if (n.by !== me.id || !n.text.trim()) return [];
     const [iv, rep] = [k.slice(0, k.indexOf(":")), parseInt(k.slice(k.indexOf(":") + 1))];
     const id = used(iv, rep);
-    return id ? [{ rid: id, text: n.text, at: n.at }] : [];
+    return id ? [{ rid: id, text: n.text, at: n.at, ...(n.counter ? { counter: true } : {}) }] : [];
   });
   return {
     kind: "return", sent: Date.now(), from: me,
@@ -99,7 +99,7 @@ export function planMerge(s: Shared, p: Private, b: ReturnBody): MergePlan {
     const w = where.get(n.rid);
     if (!w) { unplaced++; continue; }
     const k = `${noteKey(w.iv, w.rep)}:${b.from.id}`;
-    notes[k] = notes[k] ? { ...notes[k], text: notes[k].text + "\n\n" + n.text } : { text: n.text, by: b.from.id, at: n.at };
+    notes[k] = notes[k] ? { ...notes[k], text: notes[k].text + "\n\n" + n.text } : { text: n.text, by: b.from.id, at: n.at, ...(n.counter ? { counter: true } : {}) };
   }
   return {
     from: b.from, newCodes, renamed, apps, notes, unplaced,

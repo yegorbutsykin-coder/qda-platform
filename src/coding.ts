@@ -228,3 +228,12 @@ export function noteParts(key: string, iv: string): { rep: number; tail: string 
   const m = key.startsWith(iv + ":") ? /^(\d+)(.*)$/.exec(key.slice(iv.length + 1)) : null;
   return m ? { rep: Number(m[1]), tail: m[2] } : null;
 }
+
+/**
+ * For each fragment of a code: does someone else have the same code on overlapping words?
+ * "Shared" fragments are a prompt for discussion, not a reliability score (Braun & Clarke).
+ */
+export function sharedFragments(apps: App[], code: string): Map<string, string[]> {
+  const mine = apps.filter((a) => a.code === code);
+  return new Map(mine.map((a) => [a.id, [...new Set(mine.filter((b) => b.by !== a.by && b.iv === a.iv && b.rep === a.rep && b.s < a.e && b.e > a.s).map((b) => b.by))]]));
+}

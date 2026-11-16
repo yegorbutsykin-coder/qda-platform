@@ -9,7 +9,7 @@ import Merge from "./Merge";
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
 import Codebook from "./Codebook";
 import CodesPanel from "./CodesPanel";
-import { dropReplica, nextColor, noteParts, quote, remapApps, splitReplica, statuses, type Code } from "./coding";
+import { dropReplica, nextColor, noteParts, quote, remapApps, sharedFragments, splitReplica, statuses, type Code } from "./coding";
 import { applyDict as segsFor } from "./text";
 import { adoptPeople, emptyPrivate, emptyShared, ensureIds, initialsOf, type Person, GENDERS, newId, noteKey, pad, rebuild, speaker, type Tx, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
 import Dictionary from "./Dictionary";
@@ -129,6 +129,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const [sel, setSel] = useState<string>("");
   const [original, setOriginal] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [whose, setWhose] = useState("all"); // whose coding is shown: "all" or a profile id (blind coding: just mine)
   const [toast, setToast] = useState<Toast>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   const saving = useRef(Promise.resolve());
@@ -182,7 +183,11 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
     () => suspects(shared.interviews.flatMap((x) => (priv.originals[x.id] ?? []).map((r) => ({ id: x.id, segs: applyDict(r.text, priv.dict, x.id) }))), priv.ignored),
     [shared.interviews, priv],
   );
+  const [fragShow, setFragShow] = useState<"all" | "shared" | "single">("all");
+  const fragShared = useMemo(() => (focus ? sharedFragments(shared.apps, focus) : new Map<string, string[]>()), [shared.apps, focus]);
+  const fragPeople = new Set(shared.apps.filter((a) => a.code === focus).map((a) => a.by)).size;
   const copy = shared.copyOf;
+  const coders = [...new Set([props.me.id, ...shared.apps.map((a) => a.by)])];
   const flagged = new Set(allSuspects.filter((s) => !iv || s.interviews.includes(iv.id)).map((s) => s.key));
   const ivSuspects = allSuspects.filter((s) => iv && s.interviews.includes(iv.id));
 
@@ -389,13 +394,14 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
     removeApps(ids) {
       undoable(ids.length > 1 ? "Ваші коди з фрагмента прибрано." : "Код із фрагмента прибрано.", { ...shared, apps: shared.apps.filter((a) => !ids.includes(a.id)) }, priv);
     },
-    setNote(rep, text) {
+    setNote(rep, text, counter) {
       const notes = { ...shared.notes };
       // My comment keeps its key; a replica someone else commented on gets mine beside theirs.
       const base = noteKey(iv!.id, rep);
       const key = Object.keys(notes).find((k) => notes[k].by === me && noteParts(k, iv!.id)?.rep === rep)
         ?? (notes[base] ? `${base}:${me}` : base);
-      if (text.trim()) notes[key] = { text, by: me, at: Date.now() };
+      const flag = counter ?? notes[key]?.counter;
+      if (text.trim()) notes[key] = { text, by: me, at: Date.now(), ...(flag ? { counter: true } : {}) };
       else delete notes[key];
       commit({ ...shared, notes }, priv);
     },
@@ -553,6 +559,12 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
                       <button aria-pressed={byCat} onClick={() => setByCat(true)}>Категорії</button>
                     </div>
                     <label className="check" style={{ fontSize: 12 }}><input type="checkbox" checked={underlines} onChange={(e) => setUnderlines(e.target.checked)} /><span>Підкреслення</span></label>
+                    {coders.length > 1 && (
+                      <div className="seg" role="group" aria-label="Чиє кодування показувати">
+                        <button aria-pressed={whose === "all"} onClick={() => setWhose("all")}>Усіх</button>
+                        {coders.map((c) => <button key={c} aria-pressed={whose === c} onClick={() => setWhose(c)} title={shared.people?.[c]?.name}>{c === me ? "Моє" : initialsOf(shared, c)}</button>)}
+                      </div>
+                    )}
                   </div>
                   {ivSuspects.length > 0 && !copy && (
                     <div className="warnline">Ще не замінено: {ivSuspects.slice(0, 8).map((s) => `«${s.word}»`).join(", ")}{ivSuspects.length > 8 ? "…" : ""}. Колеги бачать ці слова як є.{" "}
@@ -613,7 +625,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
                       )}
                     </div>
                   ) : (
-                  <CodingSheet iv={iv} priv={priv} codes={byCat ? shared.codes.map((c) => ({ ...c, color: shared.cats.find((k) => k.id === c.cat)?.color ?? c.color })) : shared.codes} apps={shared.apps} notes={shared.notes} me={me} people={shared.people} original={original}
+                  <CodingSheet iv={iv} priv={priv} codes={byCat ? shared.codes.map((c) => ({ ...c, color: shared.cats.find((k) => k.id === c.cat)?.color ?? c.color })) : shared.codes} apps={whose === "all" ? shared.apps : shared.apps.filter((a) => a.by === whose)} notes={shared.notes} me={me} people={shared.people} original={original}
                     underlines={underlines} focus={focus} flagged={copy ? NONE : flagged} act={act} target={target}
                     seek={priv.audio[iv.id] && audioState[iv.id] === "ok" ? seek : undefined} nowRep={nowRep} edit={editing ? edit : undefined} />
                   )}
@@ -759,7 +771,18 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
             <button className="btn sm" onClick={() => setView("main")}>← До транскрипту</button>
           </div>
           {fragCode.note && <div className="panel"><span className="label">Попередня інтерпретація</span><p className="mono" style={{ fontSize: 13, lineHeight: 1.7 }}>{fragCode.note}</p></div>}
-          {shared.interviews.flatMap((x) => shared.apps.filter((a) => a.code === fragCode.id && a.iv === x.id).sort((a, b) => a.rep - b.rep || a.s - b.s).map((a) => {
+          {fragPeople > 1 && (
+            <div className="stack" style={{ gap: 6 }}>
+              <div className="row" style={{ gap: 12 }}>
+                <div className="seg" role="group" aria-label="Які фрагменти показувати">
+                  {(["all", "shared", "single"] as const).map((k) => <button key={k} aria-pressed={fragShow === k} onClick={() => setFragShow(k)}>{{ all: "Усі", shared: "Лише спільні", single: "Лише одиничні" }[k]}</button>)}
+                </div>
+                <span className="small">Спільних: {[...fragShared.values()].filter((v) => v.length).length} з {fragShared.size}</span>
+              </div>
+              <span className="small">Спільний — коли хтось іще дав цей код тим самим словам. Це привід для розмови, а не показник надійності: у рефлексивному ТА розбіжності в кодуванні — частина аналізу (Браун і Кларк).</span>
+            </div>
+          )}
+          {shared.interviews.flatMap((x) => shared.apps.filter((a) => a.code === fragCode.id && a.iv === x.id && (fragShow === "all" || (fragShow === "shared") === !!fragShared.get(a.id)?.length)).sort((a, b) => a.rep - b.rep || a.s - b.s).map((a) => {
             const r = priv.originals[x.id]?.[a.rep];
             if (!r) return null;
             return (
@@ -767,7 +790,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
                 <div className="stack" style={{ gap: 3, flex: "0 0 150px" }}>
                   <span className="mono" style={{ fontSize: 13, fontWeight: 500 }}>{pad(x.n)} · {x.card.pseudonym}</span>
                   <span className="mono small">{r.t ?? ""}</span>
-                  <span className="small">{initialsOf(shared, a.by)}</span>
+                  <span className="small">{initialsOf(shared, a.by)}{fragShared.get(a.id)?.length ? ` · спільний з ${fragShared.get(a.id)!.map((p) => initialsOf(shared, p)).join(", ")}` : ""}</span>
                 </div>
                 <p className="mono grow" style={{ fontSize: 14, lineHeight: 1.8, minWidth: 0 }}>«{quote(segsFor(r.text, priv.dict, x.id), a.s, a.e)}»</p>
                 <button className="btn sm quiet" style={{ alignSelf: "flex-start" }} onClick={() => goContext(x.id, a.rep)}>У контексті →</button>

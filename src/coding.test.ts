@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labDistance, mergeCodes, nextColor, pieces, dropReplica, quote, splitReplica, remapApps, snap, statuses, type App, type Code } from "./coding";
+import { labDistance, mergeCodes, nextColor, pieces, dropReplica, quote, sharedFragments, splitReplica, remapApps, snap, statuses, type App, type Code } from "./coding";
 import { applyDict, type DictEntry } from "./text";
 
 const dict: DictEntry[] = [{ id: "d", kind: "person", from: ["Оксана"], to: "[ім'я]", scope: "all", caps: true }];
@@ -135,5 +135,13 @@ describe("several people's comments on a replica", () => {
   it("split moves both people's later comments", () => {
     const r = splitReplica([], notes, "1", 1, "раз два", 3, () => "x");
     expect(Object.keys(r.notes).sort()).toEqual(["1:1", "1:1:p2", "1:3", "1:3:p2"]);
+  });
+});
+
+describe("shared and single fragments", () => {
+  const A = (id: string, by: string, s: number, e: number, rep = 0, code = "c"): App => ({ id, code, iv: "1", rep, s, e, by, at: 0 });
+  it("overlap with someone else's same code counts; mine or other codes do not", () => {
+    const m = sharedFragments([A("1", "p1", 0, 10), A("2", "p2", 5, 15), A("3", "p1", 20, 30), A("4", "p1", 8, 12), A("5", "p2", 20, 30, 1), A("6", "p2", 20, 30, 0, "d")], "c");
+    expect(Object.fromEntries(m)).toEqual({ "1": ["p2"], "2": ["p1"], "3": [], "4": ["p2"], "5": [] });
   });
 });

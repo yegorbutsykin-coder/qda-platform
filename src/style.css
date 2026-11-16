@@ -255,3 +255,9 @@ mark.suspect { background: transparent; border-bottom: 2px dashed var(--accent);
 .cbedge.ne, .cbedge.nw, .cbedge.se, .cbedge.sw { width: 14px; height: 14px; }
 .cbedge.ne { top: -5px; right: -5px; cursor: nesw-resize; } .cbedge.sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
 .cbedge.nw { top: -5px; left: -5px; cursor: nwse-resize; } .cbedge.se { bottom: -5px; right: -5px; cursor: nwse-resize; }
+
+/* step 2.4: transcription marks */
+.txmark { color: var(--muted); font-style: italic; }
+.marksbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 0 14px; border-bottom: 1px solid var(--line2); position: sticky; top: 0; background: var(--panel); z-index: 3; font-family: Inter, sans-serif; }
+.marksbar .btn.sm { font-family: var(--mono); font-size: 12px; }
+textarea.edittext { resize: none; }

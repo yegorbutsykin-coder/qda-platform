@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { pieces, quote, snap, type App, type Code } from "./coding";
-import { applyDict, wordKey, type Role, type Segment } from "./text";
+import { applyDict, insertMark, MARK_RE, TX_MARKS, wordKey, type Role, type Segment } from "./text";
 import { noteKey, speaker, type Interview, type Note, type Private } from "./model";
 
 type Sel = { rep: number; s: number; e: number; x: number; y: number };
@@ -18,11 +18,22 @@ export type EditActions = {
   remove: (rep: number) => void;
   join: (rep: number) => void;
   split: (rep: number, text: string, pos: number) => void;
+  /** Play/pause the recording, if there is one (Esc while typing). */
+  play?: () => void;
 };
+
+/** Puts a mark at the cursor of a transcript field, as if typed (the field saves when left). */
+function putMark(el: HTMLTextAreaElement | null, mark: string) {
+  if (!el) return;
+  const r = insertMark(el.value, el.selectionStart, mark);
+  el.value = r.text;
+  el.setSelectionRange(r.pos, r.pos);
+  grow(el);
+}
 
 const grow = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } };
 
-function EditRow(props: { i: number; t: string | null; role: Role | null; text: string; iv: Interview; edit: EditActions }) {
+function EditRow(props: { i: number; t: string | null; role: Role | null; text: string; iv: Interview; edit: EditActions; onFocus: (el: HTMLTextAreaElement) => void }) {
   const { i, edit, iv } = props;
   const box = useRef<HTMLTextAreaElement | null>(null);
   const split = () => {
@@ -48,7 +59,15 @@ function EditRow(props: { i: number; t: string | null; role: Role | null; text: 
           <button className="link danger" style={{ fontSize: 12 }} onClick={() => edit.remove(i)}>Видалити</button>
         </div>
         <textarea className="input mono edittext" rows={1} defaultValue={props.text} ref={(el) => { box.current = el; grow(el); }} onInput={(e) => grow(e.currentTarget)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); split(); } }}
+          onFocus={(e) => props.onFocus(e.currentTarget)}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return;
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); split(); return; }
+            if (e.key === "Escape" && edit.play) { e.preventDefault(); edit.play(); return; }
+            // Ctrl/⌘ + 1…5: a mark without leaving the keyboard (e.code: the same key in any layout)
+            const n = /^Digit([1-5])$/.exec(e.code);
+            if (n && (e.ctrlKey || e.metaKey) && !e.altKey) { e.preventDefault(); putMark(e.currentTarget, TX_MARKS[Number(n[1]) - 1]); }
+          }}
           aria-label={`Текст репліки ${i + 1}`} onBlur={(e) => edit.text(i, e.currentTarget.value)} />
       </div>
     </div>
@@ -195,6 +214,7 @@ export default function CodingSheet(props: {
 }) {
   const { iv, priv, codes, original, focus } = props;
   const [sel, setSel] = useState<Sel | null>(null);
+  const lastBox = useRef<HTMLTextAreaElement | null>(null); // the transcript field a mark button goes into
   const reps = priv.originals[iv.id] ?? [];
   const segsOf = (i: number) => applyDict(reps[i].text, priv.dict, iv.id);
   const color = new Map(codes.map((c) => [c.id, c.color]));
@@ -206,13 +226,22 @@ export default function CodingSheet(props: {
   }, [props.target, iv.id]);
 
   if (props.edit) {
+    const mac = /Mac/.test(navigator.platform);
     return (
       <article className="paper">
         <div className="paperhead">
           <span className="label" style={{ width: 84 }}>Час</span>
           <span className="label grow">Редагування · справжні слова видно лише вам; заміни зі словника застосуються самі; коди лишаються на своїх словах; Enter — розділити репліку в місці курсора</span>
         </div>
-        {reps.map((r, i) => <EditRow key={`${i}:${r.role}:${r.text}`} i={i} t={r.t} role={r.role} text={r.text} iv={iv} edit={props.edit!} />)}
+        <div className="marksbar" role="toolbar" aria-label="Позначки транскрипції">
+          <span className="small">Позначка в місці курсора:</span>
+          {TX_MARKS.map((m, k) => (
+            <button key={m} className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => putMark(lastBox.current, m)}
+              title={`${mac ? "⌘" : "Ctrl"} + ${k + 1}`}>[{m}]</button>
+          ))}
+          <span className="small">{mac ? "⌘" : "Ctrl"} + 1…5 — те саме з клавіатури{props.edit.play ? "; Esc — пауза / продовжити запис" : ""}</span>
+        </div>
+        {reps.map((r, i) => <EditRow key={`${i}:${r.role}:${r.text}`} i={i} t={r.t} role={r.role} text={r.text} iv={iv} edit={props.edit!} onFocus={(el) => { lastBox.current = el; }} />)}
         {!reps.length && <p className="small">Реплік немає.</p>}
       </article>
     );
@@ -266,9 +295,9 @@ export default function CodingSheet(props: {
                 const shown = props.underlines ? p.codes.filter((c) => !focus || c === focus) : [];
                 const dim = focus && !p.codes.includes(focus);
                 const cls = p.kind === "plain" ? "" : p.kind === "orig" ? "orig" : "repl";
-                const content = p.kind === "plain" && props.flagged.size
-                  ? p.text.split(CAP).map((w, j) => (j % 2 && props.flagged.has(wordKey(w)) ? <mark key={j} className="suspect">{w}</mark> : w))
-                  : p.text;
+                const content = p.kind !== "plain" ? p.text : p.text.split(MARK_RE).map((part, m) => m % 2
+                  ? <span key={m} className="txmark">{part}</span>
+                  : props.flagged.size ? part.split(CAP).map((w, j) => (j % 2 && props.flagged.has(wordKey(w)) ? <mark key={j} className="suspect">{w}</mark> : w)) : part);
                 return (
                   <span key={p.o} data-o={p.o} data-len={p.len} data-k={p.kind} data-coded={p.codes.length ? "1" : undefined}
                     className={(cls ? `m-${cls}` : "") + (dim ? " dim" : "") + (p.codes.length ? " coded" : "")}

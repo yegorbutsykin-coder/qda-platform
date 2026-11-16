@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyDict, formsFound, guessRole, joinSegments, parseTranscript, segmentsToReplicas, stems, suspects, type DictEntry } from "./text";
+import { applyDict, formsFound, guessRole, joinSegments, parseTranscript, segmentsToReplicas, stems, suspects, type DictEntry, insertMark, MARK_RE } from "./text";
 
 const entry = (from: string, to = "[ім'я]", extra: Partial<DictEntry> = {}): DictEntry =>
   ({ id: from, kind: "person", from: from.split(",").map((s) => s.trim()), to, scope: "all", caps: true, ...extra });
@@ -104,5 +104,16 @@ describe("transcription into replicas", () => {
     ]);
     const long = Array.from({ length: 30 }, (_, i) => ({ start_ms: i * 3000, end_ms: i * 3000 + 2900, text: "слово" }));
     expect(segmentsToReplicas(long).length).toBe(2);
+  });
+});
+
+describe("transcription marks", () => {
+  it("inserts with spaces only where needed", () => {
+    expect(insertMark("Ну я не знаю", 4, "пауза")).toEqual({ text: "Ну я [пауза] не знаю", pos: 12 });
+    expect(insertMark("Ну я не знаю.", 12, "сміх")).toEqual({ text: "Ну я не знаю [сміх].", pos: 19 });
+    expect(insertMark("", 0, "плач").text).toBe("[плач]");
+  });
+  it("finds marks, including a pause with its length, but not other brackets", () => {
+    expect("так [пауза 3 с] і [ім'я] [сміх]".split(MARK_RE)).toEqual(["так ", "[пауза 3 с]", " і [ім'я] ", "[сміх]", ""]);
   });
 });

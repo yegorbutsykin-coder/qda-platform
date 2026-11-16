@@ -405,6 +405,12 @@ export default function ProjectView(props: { id: string; me: string; onBack: () 
       undoable(`Репліку ${rep + 1} приєднано до попередньої.`, { ...shared, ...r },
         setOrigs(list.flatMap((x, i) => (i === rep ? [] : i === rep - 1 ? [{ ...x, text: x.text + " " + list[rep].text }] : [x]))));
     },
+    play: priv.audio[iv?.id ?? ""] && audioState[iv?.id ?? ""] === "ok" ? () => {
+      const el = audioEl.current;
+      if (!el) return;
+      // Back 2 s on resume, so the words before the pause are heard again.
+      if (el.paused) { el.currentTime = Math.max(0, el.currentTime - 2); el.play(); } else el.pause();
+    } : undefined,
     split(rep, text, pos) {
       const list = origs();
       const apps = remapApps(shared.apps, iv!.id, rep, list[rep].text, text);

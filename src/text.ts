@@ -205,3 +205,14 @@ export function segmentsToReplicas(segs: TxSegment[], gapMs = 1500, maxMs = 60_0
   }
   return out.map(({ t, label, text }) => ({ t, label, text }));
 }
+
+/** Transcription marks (step 2.4): written into the text as [пауза], [сміх]…; "[пауза 3 с]" also counts. */
+export const TX_MARKS = ["пауза", "сміх", "плач", "нерозбірливо", "перебивання"] as const;
+export const MARK_RE = new RegExp(`(\\[(?:${TX_MARKS.join("|")})[^\\]\\n]{0,20}\\])`, "u");
+
+/** Puts a mark into `text` at `pos`, with a space on each side where a word touches it; returns the new text and cursor. */
+export function insertMark(text: string, pos: number, mark: string): { text: string; pos: number } {
+  const before = text.slice(0, pos), after = text.slice(pos);
+  const ins = (before && !/\s$/.test(before) ? " " : "") + `[${mark}]` + (after && !/^[\s.,!?;:…)]/.test(after) ? " " : "");
+  return { text: before + ins + after, pos: pos + ins.length };
+}

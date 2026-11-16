@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # to publish installers on the Releases page
 
 jobs:
   build:
@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15-intel
+          - os: macos-latest
             name: macOS
             args: --target universal-apple-darwin
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -97,3 +97,13 @@ jobs:
           name: QDA-${{ matrix.name }}
           path: ${{ matrix.bundle }}
           if-no-files-found: error
+      # Public download page: one release per version, each installer added as its build finishes.
+      - name: Publish on the Releases page
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(node -p "require('./package.json').version")
+          gh release view "v$v" >/dev/null 2>&1 || gh release create "v$v" --title "Платформа QDA $v" --notes-file .github/release-notes.md || true
+          gh release upload "v$v" ${{ matrix.bundle }} --clobber

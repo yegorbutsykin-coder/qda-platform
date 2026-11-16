@@ -4,7 +4,7 @@
 
 ## Як отримати інсталятор
 
-Після кожної зміни GitHub сам збирає програму: вкладка **Actions** → останній зелений запуск «Build installers» → унизу, в «Artifacts», — `QDA-macOS` або `QDA-Windows` (завантажується zip, усередині інсталятор).
+**Завантажити:** https://github.com/yegorbutsykin-coder/qda-platform/releases/latest — у розділі Assets файл `.dmg` для Mac або `setup.exe` для Windows (акаунт GitHub не потрібен). Після кожної зміни GitHub сам збирає програму й додає інсталятори туди; ті самі файли є й у вкладці **Actions** → «Build installers» → «Artifacts».
 
 ## Перше відкриття на Mac
 

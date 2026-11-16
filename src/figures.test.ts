@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agreement, byPerson, codesByCategory, matrix, saturationCurve, saturationWords } from "./analysis";
+import { agreement, byPerson, codesByCategory, matrix, saturationCurve, saturationWords } from "./figures";
 import type { App, Code } from "./coding";
 
 const A = (id: string, code: string, iv: string, s: number, e: number, by = "p1", rep = 0): App => ({ id, code, iv, rep, s, e, by, at: 0 });

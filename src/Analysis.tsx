@@ -2,7 +2,7 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { agreement, byPerson, codesByCategory, matrix, saturationCurve, saturationWords } from "./analysis";
+import { agreement, byPerson, codesByCategory, matrix, saturationCurve, saturationWords } from "./figures";
 import type { Code } from "./coding";
 import { initialsOf, pad, type Shared } from "./model";
 

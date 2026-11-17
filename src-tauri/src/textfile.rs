@@ -12,7 +12,7 @@ pub fn read(path: &Path) -> Result<String, String> {
     }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     match ext.as_str() {
-        "txt" | "text" | "md" => Ok(decode(&fs::read(path).map_err(|e| format!("io:{e}"))?)),
+        "txt" | "text" | "md" | "ris" | "bib" | "bibtex" => Ok(decode(&fs::read(path).map_err(|e| format!("io:{e}"))?)),
         "docx" => docx(path),
         _ => Err("unsupported".into()),
     }

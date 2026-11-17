@@ -1,4 +1,6 @@
 // Stage 5: the «Стаття» tab — title, sections by method with hints, word counts, supervisor remarks, quotes from coding.
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import { Fragment, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import {
@@ -7,6 +9,7 @@ import {
 } from "./article";
 import { checkList } from "./apaCheck";
 import { audit, citeOf } from "./citations";
+import { parseRefs } from "./importRefs";
 import { LEVELS } from "./coding";
 import { saveDocx, saveFigures, wideTable } from "./exportArticle";
 import { initialsOf, newId, type Note, type Private, type Shared } from "./model";
@@ -231,6 +234,21 @@ export default function ArticleView(props: {
       caret.current = r.caret;
       setRefMsg(`Посилання ${text} вставлено в розділ «${nameOf(r.caret.sec)}».`);
     };
+    async function importFile() {
+      const path = await open({ title: "Джерела з Zotero", filters: [{ name: "RIS або BibTeX", extensions: ["ris", "bib", "bibtex", "txt"] }] });
+      if (!path || Array.isArray(path)) return;
+      try {
+        const found = parseRefs(await invoke<string>("read_transcript", { path }));
+        if (!found.length) { setRefMsg("У файлі не знайдено джерел. Потрібен файл RIS (.ris) або BibTeX (.bib): у Zotero — «Файл → Експортувати бібліотеку…» або правий клік на колекції → «Експортувати колекцію…»."); return; }
+        // The same DOI, or the same text, is already in the list: not added twice.
+        const doi = (t: string) => t.match(/10\.\d{4,}\/[^\s]+/)?.[0].toLowerCase();
+        const key = (t: string) => doi(t) ?? t.replace(/\*/g, "").toLowerCase().replace(/\s+/g, " ");
+        const have = new Set((latest.current.refs ?? []).map((r) => key(r.text)));
+        const fresh = found.filter((t) => { const k = key(t); if (have.has(k)) return false; have.add(k); return true; });
+        if (fresh.length) edit(addRefs(latest.current, fresh.join("\n"), newId));
+        setRefMsg(`Додано джерел: ${fresh.length}${found.length > fresh.length ? `; уже були в списку: ${found.length - fresh.length}` : ""}.${fresh.length ? " Перевірте позначки APA нижче: назви з Zotero часто в «Title Case», а APA вимагає реченнєвий регістр." : ""}`);
+      } catch (e) { setRefMsg(`Не вдалося прочитати файл: ${e}`); }
+    }
     const groups = order === "cyr" && sorted && refs.some((r) => isCyrillic(r.text)) && refs.some((r) => !isCyrillic(r.text));
     return (
       <section id="sec-refs" className="artsec" aria-label={en ? "References" : "Список літератури"}>
@@ -311,7 +329,8 @@ export default function ArticleView(props: {
               placeholder={"Вставте одне чи кілька джерел — кожне з нового рядка.\nБоймер, Д. (2021). Невизначена втрата. *Журнал психології*, *12*(3), 45–60. https://doi.org/10.1234/abcd"} />
             <div className="row" style={{ gap: 10 }}>
               <button className="btn sm" disabled={!newRefs.trim()} onClick={() => { edit(addRefs(latest.current, newRefs, newId)); setNewRefs(""); }}>Додати до списку</button>
-              <span className="small">Курсив — між зірочками: *Назва журналу*, *12*(3). Імпорт із Zotero — на кроці 6.4.</span>
+              <button className="btn sm" onClick={importFile}>Імпорт із Zotero (RIS, BibTeX)…</button>
+              <span className="small">Курсив — між зірочками: *Назва журналу*, *12*(3). Zotero, Mendeley, Google Scholar: експортуйте файл .ris або .bib — програма оформить джерела за APA 7.</span>
             </div>
           </div>
         )}

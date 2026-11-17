@@ -293,3 +293,15 @@ textarea.edittext { resize: none; }
 .apapage p { margin: 0; }
 .apanum { font-weight: 700; }
 .apatitle { font-style: italic; }
+
+/* stage 4.3: words in context, tone */
+.kwic { display: flex; flex-direction: column; border-top: 1px solid var(--line2); }
+.kwicrow { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto minmax(0, 1fr) 24px; gap: 0; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--line2); font-size: 13px; }
+.kl { text-align: right; overflow: hidden; white-space: nowrap; color: var(--muted); }
+.kr { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
+.kw { color: var(--accent); }
+.tonerow { display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--line2); }
+.tonebtn { font: 12px Inter, sans-serif; padding: 3px 8px; border: 1px solid var(--line); background: none; color: var(--muted); cursor: pointer; }
+.tonebtn.guess { border: 1.5px dashed var(--tc); color: var(--ink); }
+.tonebtn.on { background: var(--tc); border-color: var(--tc); color: #fff; }
+.kwicrow > :first-child { margin-right: 8px; } .kwicrow > :last-child { margin-left: 8px; }

@@ -724,7 +724,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
           suspects={allSuspects.map((x) => x.word)} onBack={() => setView("main")} toDict={() => setView("dict")} />
       )}
       {/* Kept open while away, so «← Назад» returns to the same tool and filters. */}
-      {seenAnalysis && meta && <div hidden={view !== "analysis"}><Analysis shared={shared} priv={priv} method={meta.method} me={me} onBack={() => setView("main")} goContext={goContext} /></div>}
+      {seenAnalysis && meta && <div hidden={view !== "analysis"}><Analysis shared={shared} priv={priv} method={meta.method} me={me} onBack={() => setView("main")} goContext={goContext} setTones={(tones) => commit({ ...shared, tones }, priv)} /></div>}
       {view === "remarks" && (
         <RemarksView rows={remarkRows} me={me} who={who} set={setRemark} onBack={() => setView("main")} />
       )}

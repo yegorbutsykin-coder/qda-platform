@@ -21,7 +21,9 @@ export type Note = {
 export type Person = { name: string; initials: string };
 export type Shared = { fields: Field[]; interviews: Interview[]; codes: Code[]; apps: App[]; notes: Record<string, Note>; cats: Cat[]; supers: Super[]; levels?: Levels; people?: Record<string, Person>; copyOf?: CopyOf;
   /** Saturation mark: this many coded interviews in a row without new codes (stage 3.6). */
-  satN?: number };
+  satN?: number;
+  /** Confirmed emotional tone of coded fragments, by the id of the fragment's first coding (stage 4.3). */
+  tones?: Record<string, "neg" | "amb" | "pos" | "neu"> };
 /** Set in a project made from a received package: whose project it copies, and when it came. */
 export type CopyOf = { project: string; from: Person & { id: string }; kind: "copy" | "supervisor"; stage?: string; sent: number; received: number; blind: boolean };
 export type OrigReplica = Replica & { role: Role | null; id?: string };

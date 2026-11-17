@@ -152,6 +152,8 @@ const TITLES: Record<string, (n: number, lang: Lang) => string> = {
   saturation: (n, l) => (l === "uk" ? `Нові й накопичені коди ${inN(n, l)}` : `New and Cumulative Codes ${inN(n, l)}`),
   agreement: (_n, l) => (l === "uk" ? "Збіг кодування між дослідниками(цями)" : "Overlap in Coding Between Researchers"),
   people: (_n, l) => (l === "uk" ? "Використання кодів дослідниками(цями)" : "Use of Codes by Researcher"),
+  time: (n, l) => (l === "uk" ? `Займенники й часові маркери в закодованих фрагментах ${inN(n, l)}` : `Pronouns and Tense Markers in Coded Segments ${inN(n, l)}`),
+  tone: (n, l) => (l === "uk" ? `Емоційне забарвлення закодованих фрагментів ${inN(n, l)}` : `Emotional Tone of Coded Segments ${inN(n, l)}`),
 };
 const READ: Record<string, [string, string]> = {
   matrix: ["Число в клітинці — кількість фрагментів; темніший колір — більше фрагментів.", "Cell values show the number of coded segments; darker shading indicates more segments."],
@@ -161,6 +163,8 @@ const READ: Record<string, [string, string]> = {
   saturation: ["Угорі — нові коди в кожному інтерв'ю, унизу — накопичена кількість кодів.", "Top: new codes in each interview; bottom: cumulative number of codes."],
   agreement: ["Частка фрагментів, позначених трьома й більше, двома чи одним(ною) дослідником(цею).", "Share of segments coded by three or more, two, or one researcher."],
   people: ["Число — кількість фрагментів, позначених кодом.", "Values show the number of segments coded."],
+  time: ["Частки слів-індикаторів у висловлюваннях учасників(ць); числа — кількість слів. Підрахунок за словниками, допоміжний.", "Shares of indicator words in participants' coded speech; numbers are word counts. Dictionary-based counts are indicative only."],
+  tone: ["Враховано лише фрагменти, забарвлення яких підтвердив(ла) дослідник(ця); числа — кількість фрагментів.", "Only segments whose tone was confirmed by a researcher are included; numbers are segment counts."],
 };
 const PEOPLE_UK = ["", "одного(ї)", "двох", "трьох", "чотирьох", "п'яти", "шести", "семи", "восьми", "дев'яти"];
 

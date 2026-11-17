@@ -286,3 +286,4 @@ textarea.edittext { resize: none; }
 .afig { background: #fff; border: 1px solid var(--line2); padding: 16px; overflow: auto; }
 .chip { font: 12px var(--mono); border: 1px solid var(--line); background: none; padding: 2px 7px; cursor: pointer; color: var(--muted); }
 .chip.on { border-color: var(--ink); color: var(--ink); background: var(--panel); }
+.backfloat { position: fixed; right: 24px; bottom: 20px; z-index: 40; gap: 10px; background: var(--bg); padding: 8px 10px; border: 1px solid var(--line); box-shadow: 0 4px 16px rgba(0,0,0,0.08); }

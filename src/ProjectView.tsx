@@ -132,7 +132,10 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const [sel, setSel] = useState<string>("");
   const [original, setOriginal] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [whose, setWhose] = useState("all"); // whose coding is shown: "all" or a profile id (blind coding: just mine)
+  const [whose, setWhose] = useState("all");
+  const [back, setBack] = useState<{ view: typeof view; label: string } | null>(null);
+  const [seenAnalysis, setSeenAnalysis] = useState(false);
+  useEffect(() => { if (view !== "main") setBack(null); if (view === "analysis") setSeenAnalysis(true); }, [view]); // whose coding is shown: "all" or a profile id (blind coding: just mine)
   const [toast, setToast] = useState<Toast>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   const saving = useRef(Promise.resolve());
@@ -500,7 +503,11 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const codeName = (id: string) => shared.codes.find((c) => c.id === id)?.name ?? "?";
   const STATUS = { none: "не закодовано", new: "є нові коди", existing: "лише наявні коди" } as const;
   const fragCode = shared.codes.find((c) => c.id === focus);
-  const goContext = (ivId: string, rep: number) => { setSel(ivId); setTarget(rep); setView("main"); };
+  // Jumping into the transcript from a list remembers the list, for «← Назад».
+  const goContext = (ivId: string, rep: number) => {
+    if (view !== "main") setBack({ view, label: view === "frags" ? `фрагментів коду «${shared.codes.find((c) => c.id === focus)?.name ?? ""}»` : view === "remarks" ? "зауважень" : "візуального аналізу" });
+    setSel(ivId); setTarget(rep); setView("main");
+  };
 
   if (!meta) return <section className="card wide">{error ? <span className="bad">{error}</span> : <span className="small">Відкриваю…</span>}</section>;
 
@@ -596,6 +603,12 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
               </nav>
               {iv && (
                 <section aria-label={`Інтерв'ю ${pad(iv.n)}`}>
+                  {back && (
+                    <div className="row backfloat">
+                      <button className="btn sm primary" onClick={() => setView(back.view)}>← Назад до {back.label}</button>
+                      <button className="link" style={{ fontSize: 12 }} onClick={() => setBack(null)} aria-label="Прибрати кнопку повернення">прибрати</button>
+                    </div>
+                  )}
                   <div className="cardline">
                     <span><b>{iv.card.pseudonym}</b></span>
                     {iv.card.age && <span>{iv.card.age} р.</span>}
@@ -710,7 +723,8 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
         <Share shared={shared} priv={priv} projectId={props.id} name={meta.name} method={meta.method} me={props.me}
           suspects={allSuspects.map((x) => x.word)} onBack={() => setView("main")} toDict={() => setView("dict")} />
       )}
-      {view === "analysis" && meta && <Analysis shared={shared} priv={priv} method={meta.method} me={me} onBack={() => setView("main")} goContext={goContext} />}
+      {/* Kept open while away, so «← Назад» returns to the same tool and filters. */}
+      {seenAnalysis && meta && <div hidden={view !== "analysis"}><Analysis shared={shared} priv={priv} method={meta.method} me={me} onBack={() => setView("main")} goContext={goContext} /></div>}
       {view === "remarks" && (
         <RemarksView rows={remarkRows} me={me} who={who} set={setRemark} onBack={() => setView("main")} />
       )}

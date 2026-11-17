@@ -309,3 +309,21 @@ textarea.edittext { resize: none; }
 .cardtable th, .cardtable td { padding: 4px 10px; border-bottom: 1px solid var(--line2); text-align: left; font-weight: 400; }
 .cardtable th { color: var(--muted); }
 .cardtable .hl { background: #FBEDE6; }
+
+/* stage 5: article */
+.article { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; align-items: start; }
+.artnav { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 12px; }
+.artlink { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border-left: 2px solid transparent; color: var(--ink); text-decoration: none; font-size: 13px; }
+.artlink.on { border-left-color: var(--accent); background: var(--panel); }
+.arttitle { font-size: 22px; font-weight: 500; height: auto; padding: 10px 12px; }
+.artsec { display: flex; flex-direction: column; gap: 8px; padding: 18px 20px; background: var(--panel); border: 1px solid var(--line2); border-left: 3px solid transparent; scroll-margin-top: 16px; }
+.artsec.on { border-left-color: var(--accent); }
+.arthint summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.arthint p { font-size: 13px; line-height: 1.6; color: var(--muted); margin: 6px 0 0; max-width: 760px; }
+textarea.arttext { width: 100%; resize: none; overflow: hidden; font-size: 14px; line-height: 1.8; padding: 10px 12px; min-height: 90px; }
+.wcount { display: inline-flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.wcount.over { color: #B3261E; }
+.wbar { display: inline-block; width: 80px; height: 4px; background: var(--line3); }
+.wbar span { display: block; height: 4px; background: var(--ink); }
+.wcount.over .wbar span { background: #B3261E; }
+.artremark { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-left: 2px solid var(--accent); background: #fff; }

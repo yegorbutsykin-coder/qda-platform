@@ -16,6 +16,8 @@ export type Note = {
   text: string; by: string; at: number; counter?: boolean;
   /** Supervision (stage 3.5): a remark goes open → fixed (by the student, maybe with a reply) → closed or reopened. */
   status?: "open" | "fixed" | "closed"; statusAt?: number; reply?: { text: string; by: string; at: number };
+  /** Remarks on the article: the passage they refer to (stage 5). */
+  quote?: string;
 };
 /** A researcher in the project: codes, coding and comments carry their profile id in `by`. */
 export type Person = { name: string; initials: string };
@@ -23,7 +25,9 @@ export type Shared = { fields: Field[]; interviews: Interview[]; codes: Code[]; 
   /** Saturation mark: this many coded interviews in a row without new codes (stage 3.6). */
   satN?: number;
   /** Confirmed emotional tone of coded fragments, by the id of the fragment's first coding (stage 4.3). */
-  tones?: Record<string, "neg" | "amb" | "pos" | "neu"> };
+  tones?: Record<string, "neg" | "amb" | "pos" | "neu">;
+  /** The article (stage 5); travels in packages like the coding. */
+  article?: import("./article").Article };
 /** Set in a project made from a received package: whose project it copies, and when it came. */
 export type CopyOf = { project: string; from: Person & { id: string }; kind: "copy" | "supervisor"; stage?: string; sent: number; received: number; blind: boolean };
 export type OrigReplica = Replica & { role: Role | null; id?: string };

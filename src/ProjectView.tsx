@@ -7,6 +7,8 @@ import Compare, { LANGS } from "./Compare";
 import Share from "./Share";
 import Merge, { PackPicker } from "./Merge";
 import Analysis from "./Analysis";
+import ArticleView from "./ArticleView";
+import { emptyArticle } from "./article";
 import { RemarksView, Remark, type RemarkPatch, type RemarkRow } from "./Remarks";
 import { updateCopy } from "./exchange";
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
@@ -120,7 +122,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const [shared, setShared] = useState<Shared>(emptyShared());
   const [priv, setPriv] = useState<Private>(emptyPrivate());
   const [error, setError] = useState("");
-  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share" | "merge" | "remarks" | "update" | "analysis">("main");
+  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share" | "merge" | "remarks" | "update" | "analysis" | "article">("main");
   const [focus, setFocus] = useState<string | null>(null);
   const [underlines, setUnderlines] = useState(true);
   const [leftTab, setLeftTab] = useState<"iv" | "codes">("iv");
@@ -135,6 +137,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const [whose, setWhose] = useState("all");
   const [back, setBack] = useState<{ view: typeof view; label: string } | null>(null);
   const [seenAnalysis, setSeenAnalysis] = useState(false);
+  const [artFocus, setArtFocus] = useState<string | null>(null);
   useEffect(() => { if (view !== "main") setBack(null); if (view === "analysis") setSeenAnalysis(true); }, [view]); // whose coding is shown: "all" or a profile id (blind coding: just mine)
   const [toast, setToast] = useState<Toast>(null);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -199,6 +202,10 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   }
   const who = (by: string) => initialsOf(shared, by);
   const remarkRows: RemarkRow[] = Object.entries(shared.notes).filter(([, n]) => n.status).map(([key, n]) => {
+    if (key.startsWith("art:")) {
+      const sec = key.split(":")[1];
+      return { key, n, where: `стаття · ${{ abstract: "Анотація", intro: "Вступ", method: "Метод", results: "Результати", discussion: "Обговорення" }[sec] ?? sec}`, go: () => { setArtFocus(null); setTimeout(() => setArtFocus(sec)); setView("article"); } };
+    }
     if (key.startsWith("code:")) {
       const c = shared.codes.find((x) => x.id === key.split(":")[1]);
       return { key, n, where: `код «${c?.name ?? "?"}»`, go: c ? () => { setFocus(c.id); setView("frags"); } : undefined };
@@ -532,6 +539,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
               <span className="title">{meta.name}</span>
             </div>
             <div className="grow" />
+            <button className="btn sm" onClick={() => setView("article")}>Стаття</button>
             {shared.apps.length > 0 && <button className="btn sm" onClick={() => setView("analysis")}>Візуальний аналіз</button>}
             {remarkRows.length > 0 && <button className="btn sm" onClick={() => setView("remarks")}>Зауваження · {openRemarks}</button>}
             {copy ? (
@@ -725,6 +733,15 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
       )}
       {/* Kept open while away, so «← Назад» returns to the same tool and filters. */}
       {seenAnalysis && meta && <div hidden={view !== "analysis"}><Analysis shared={shared} priv={priv} method={meta.method} me={me} onBack={() => setView("main")} goContext={goContext} setTones={(tones) => commit({ ...shared, tones }, priv)} /></div>}
+      {view === "article" && meta && (
+        <div className="stack" style={{ gap: 12 }}>
+          <button className="link" style={{ fontSize: 12, alignSelf: "flex-start" }} onClick={() => setView("main")}>← До транскриптів</button>
+          <ArticleView article={shared.article ?? emptyArticle()} method={meta.method} readOnly={!!copy} supervisor={copy?.kind === "supervisor"} me={me}
+            notes={shared.notes} who={who} focus={artFocus} setRemark={setRemark}
+            save={(article) => commit({ ...latest.current.shared, article }, latest.current.priv)}
+            addRemark={(sec, text, q) => commit({ ...shared, notes: { ...shared.notes, [`art:${sec}:${newId()}`]: { text, by: me, at: Date.now(), status: "open", statusAt: Date.now(), ...(q ? { quote: q } : {}) } } }, priv)} />
+        </div>
+      )}
       {view === "remarks" && (
         <RemarksView rows={remarkRows} me={me} who={who} set={setRemark} onBack={() => setView("main")} />
       )}

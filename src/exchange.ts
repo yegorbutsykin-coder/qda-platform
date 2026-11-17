@@ -14,7 +14,7 @@ export type ReturnBody = {
   /** Coding by `from`, placed by replica id. */
   apps: (Omit<App, "iv" | "rep"> & { rid: string })[];
   /** Comments on replicas (`rid`) or on codes (`code`), with their supervision status. */
-  notes: (Omit<Note, "by"> & { rid?: string; code?: string })[];
+  notes: (Omit<Note, "by"> & { rid?: string; code?: string; art?: string })[];
   /** The text each replica had in the copy, to follow the owner's later edits. */
   texts: Record<string, string>;
 };
@@ -32,6 +32,7 @@ export function buildReturn(s: Shared, p: Private, me: Person & { id: string }):
   const notes = Object.entries(s.notes).flatMap(([k, { by: _by, ...n }]): ReturnBody["notes"] => {
     if (_by !== me.id || !n.text.trim()) return [];
     if (k.startsWith("code:")) return [{ ...n, code: k.split(":")[1] }];
+    if (k.startsWith("art:")) return [{ ...n, art: k }];
     const [iv, rep] = [k.slice(0, k.indexOf(":")), parseInt(k.slice(k.indexOf(":") + 1))];
     const id = used(iv, rep);
     return id ? [{ ...n, rid: id }] : [];
@@ -97,9 +98,9 @@ export function planMerge(s: Shared, p: Private, b: ReturnBody): MergePlan {
     apps.push({ ...a, iv: w.iv, rep: w.rep, s: st, e: en, by: b.from.id });
   }
   const notes: Record<string, Note> = {};
-  for (const { rid, code, ...n } of b.notes) {
+  for (const { rid, code, art, ...n } of b.notes) {
     const w = rid ? where.get(rid) : undefined;
-    const k = code ? (known.has(code) ? `code:${code}:${b.from.id}` : "") : w ? `${noteKey(w.iv, w.rep)}:${b.from.id}` : "";
+    const k = art ? art : code ? (known.has(code) ? `code:${code}:${b.from.id}` : "") : w ? `${noteKey(w.iv, w.rep)}:${b.from.id}` : "";
     if (!k) { unplaced++; continue; }
     notes[k] = notes[k] ? { ...notes[k], text: notes[k].text + "\n\n" + n.text } : { ...n, by: b.from.id };
   }

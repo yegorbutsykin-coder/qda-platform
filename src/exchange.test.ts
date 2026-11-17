@@ -112,6 +112,14 @@ describe("supervision through files", () => {
     expect(s2.notes["iv:0:sv"].reply?.text).toBe("Перейменувала на «тривога».");
   });
 
+  it("remarks on the article travel too, with the quoted passage", () => {
+    const c = updateCopy({ ...emptyShared() }, emptyPrivate(), sup, { ...s0, article: { title: "Т", texts: { method: "Ми опитали сім осіб." } } }, copyOf(1));
+    c.shared.notes = { "art:method:x1": { text: "Опишіть набір учасників(ць).", by: "sv", at: 5, status: "open", statusAt: 5, quote: "Ми опитали сім осіб." } };
+    const back = applyMerge(s0, planMerge(s0, sPriv, buildReturn(c.shared, c.priv, sup)), new Set());
+    expect(back.notes["art:method:x1"]).toMatchObject({ by: "sv", quote: "Ми опитали сім осіб.", status: "open" });
+    expect(c.shared.article?.texts.method).toBe("Ми опитали сім осіб.");
+  });
+
   it("updating a copy keeps the reader's own coding", () => {
     const c1 = updateCopy({ ...emptyShared() }, emptyPrivate(), sup, s0, copyOf(1));
     c1.shared.apps = [{ id: "a", code: "c1", iv: "iv", rep: 0, s: 10, e: 17, by: "sv", at: 5 }];

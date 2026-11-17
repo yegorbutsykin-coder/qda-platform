@@ -5,6 +5,7 @@ import {
   addRefs, countWords, dataSig, dropFloat, exportBlocks, isCyrillic, refsSorted, rich, sortRefs, formatQuote, fragKey, join, journalChanged, METHODS, moveFloat, numbers, putFloat, putText, resetJournal, resultsKey,
   sectionsOf, split, themeTable, totalLimit, type Article, type Block, type Caret, type FigFloat, type Float, type Journal, type Method, type SectionConf, type TabFloat,
 } from "./article";
+import { checkList } from "./apaCheck";
 import { LEVELS } from "./coding";
 import { saveDocx, saveFigures, wideTable } from "./exportArticle";
 import { initialsOf, newId, type Note, type Private, type Shared } from "./model";
@@ -86,7 +87,8 @@ export default function ArticleView(props: {
   const [picking, setPicking] = useState<string | null>(null);
   const [out, setOut] = useState(""); // export status line
   const [refEdit, setRefEdit] = useState<string | null>(null);
-  const [newRefs, setNewRefs] = useState(""); // "table id|category id" choosing a quote
+  const [newRefs, setNewRefs] = useState("");
+  const [why, setWhy] = useState<Set<string>>(new Set()); // sources with their APA notes unfolded // "table id|category id" choosing a quote
   const [quotes, setQuotes] = useState(false);
   const [qcode, setQcode] = useState<string | null>(null);
   const [placed, setPlaced] = useState("");
@@ -204,6 +206,10 @@ export default function ArticleView(props: {
       latest.current = next; setDraft(next);
       props.undoable("Джерело видалено зі списку літератури.", before, next);
     };
+    const issues = checkList(refs, order);
+    const level = (id: string) => (issues.get(id)!.some((x) => x.level === "error") ? "error" : issues.get(id)!.length ? "warn" : "");
+    const nErr = refs.filter((r) => level(r.id) === "error").length, nWarn = refs.filter((r) => level(r.id) === "warn").length;
+    const toggle = (id: string) => setWhy((w) => { const n = new Set(w); if (n.has(id)) n.delete(id); else n.add(id); return n; });
     const groups = order === "cyr" && sorted && refs.some((r) => isCyrillic(r.text)) && refs.some((r) => !isCyrillic(r.text));
     return (
       <section id="sec-refs" className="artsec" aria-label={en ? "References" : "Список літератури"}>
@@ -221,6 +227,15 @@ export default function ArticleView(props: {
             <span className="small grow">{order === "cyr" ? "Спершу джерела кирилицею за українською абеткою, потім латиницею." : "Один список за латинською абеткою — коли журнал вимагає транслітерувати кириличні джерела."}</span>
           </div>
         )}
+        {refs.length > 0 && (
+          <div className="row" style={{ gap: "4px 14px", fontSize: 13 }} role="status">
+            <span>Перевірка за APA 7:</span>
+            {nErr > 0 && <span className="refsum referr">з помилками — {nErr}</span>}
+            {nWarn > 0 && <span className="refsum refwarn">варто перевірити — {nWarn}</span>}
+            <span className="small">без зауважень — {refs.length - nErr - nWarn}</span>
+            <span className="small grow">Перевірка евристична: наведіть на джерело або натисніть «!», щоб побачити, що виправити; остаточно звіряйте з посібником APA.</span>
+          </div>
+        )}
         <div className="stack" style={{ gap: 2 }}>
           {refs.map((r, i) => (
             <Fragment key={r.id}>
@@ -230,10 +245,21 @@ export default function ArticleView(props: {
                   onBlur={(e) => { const t = e.currentTarget.value.replace(/\s*\n\s*/g, " ").trim(); setRefEdit(null); if (t !== r.text) setRefs(refs.map((x) => (x.id === r.id ? { ...x, text: t } : x))); }}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); if (e.key === "Escape") e.currentTarget.value = r.text; e.currentTarget.blur(); } }} />
               ) : (
+                <div className={"refwrap" + (level(r.id) ? " ref" + (level(r.id) === "error" ? "err" : "warn") : "")}>
                 <div className="row refrow" style={{ gap: 10, alignItems: "baseline", flexWrap: "nowrap" }}>
-                  <p className="refline grow"><Rich text={r.text} /></p>
+                  <p className="refline grow" title={issues.get(r.id)!.map((x) => (x.level === "error" ? "✕ " : "△ ") + x.msg).join("\n") || undefined}><Rich text={r.text} /></p>
+                  {issues.get(r.id)!.length > 0 && (
+                    <button className="refbang" aria-expanded={why.has(r.id)} onClick={() => toggle(r.id)}
+                      aria-label={`Зауваження за APA 7: ${issues.get(r.id)!.length}`}>!</button>
+                  )}
                   {!ro && <button className="link" style={{ fontSize: 12 }} onClick={() => setRefEdit(r.id)} aria-label={`Редагувати: ${r.text.slice(0, 40)}`}>Редагувати</button>}
                   {!ro && <button className="link danger" style={{ fontSize: 12 }} onClick={() => dropRef(r.id)} aria-label={`Видалити: ${r.text.slice(0, 40)}`}>Видалити</button>}
+                </div>
+                {why.has(r.id) && (
+                  <ul className="refissues">
+                    {issues.get(r.id)!.map((x, k) => <li key={k} className={x.level}><b>{x.level === "error" ? "Помилка" : "Варто перевірити"}:</b> {x.msg}</li>)}
+                  </ul>
+                )}
                 </div>
               )}
             </Fragment>
@@ -245,7 +271,7 @@ export default function ArticleView(props: {
               placeholder={"Вставте одне чи кілька джерел — кожне з нового рядка.\nБоймер, Д. (2021). Невизначена втрата. *Журнал психології*, *12*(3), 45–60. https://doi.org/10.1234/abcd"} />
             <div className="row" style={{ gap: 10 }}>
               <button className="btn sm" disabled={!newRefs.trim()} onClick={() => { edit(addRefs(latest.current, newRefs, newId)); setNewRefs(""); }}>Додати до списку</button>
-              <span className="small">Курсив — між зірочками: *Назва журналу*, *12*(3). Перевірка за APA 7 — на кроці 6.2, посилання в тексті — 6.3, імпорт із Zotero — 6.4.</span>
+              <span className="small">Курсив — між зірочками: *Назва журналу*, *12*(3). Посилання в тексті (Автор, рік) — на кроці 6.3, імпорт із Zotero — 6.4.</span>
             </div>
           </div>
         )}

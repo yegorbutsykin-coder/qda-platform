@@ -213,6 +213,72 @@ export function themeTable(s: Shared, t: Omit<TabFloat, "rows" | "cols" | "n" | 
   return { rows, cols: ivs.map((x) => x.card.pseudonym), n: ivs.length };
 }
 
+/** A table as rows of plain cells, the same on screen, in Word and in print. */
+export function tableCells(t: TabFloat, en: boolean, mid: string): { head: string[]; rows: { cells: string[]; group: boolean }[] } {
+  const theme = en ? "Theme" : mid;
+  if (t.variant === "presence") {
+    return { head: [theme, ...t.cols, en ? "Total" : "Разом"], rows: t.rows.map((r) => ({ cells: [r.name, ...(r.cells ?? []).map((c) => (c ? "✓" : "")), String(r.people.length)], group: false })) };
+  }
+  const head = [theme, ...(t.showPeople ? [en ? "Participants" : "Учасники(ці)"] : []), ...(t.showQuote ? [en ? "Illustrative quote" : "Ілюстративна цитата"] : [])];
+  const supers = t.rows.some((r) => r.sup);
+  const rows: { cells: string[]; group: boolean }[] = [];
+  let last: string | undefined = "\u0000";
+  for (const r of t.rows) {
+    if (supers && r.sup !== last) rows.push({ cells: [r.sup ?? (en ? "Other themes" : "Інші теми")], group: true });
+    last = r.sup;
+    rows.push({ cells: [r.name, ...(t.showPeople ? [`${r.people.join(", ")} (${r.people.length} ${en ? "of" : "з"} ${t.n})`] : []), ...(t.showQuote ? [r.quote ?? "—"] : [])], group: false });
+  }
+  return { head, rows };
+}
+
+export type Block =
+  | { k: "title"; text: string; brk: boolean }
+  | { k: "h1"; text: string }
+  | { k: "p"; text: string; indent: boolean }
+  | { k: "quote"; text: string }
+  | { k: "fig"; label: string; f: FigFloat; brk: boolean }
+  | { k: "tab"; label: string; t: TabFloat; brk: boolean; head: string[]; rows: { cells: string[]; group: boolean }[] };
+
+/**
+ * The article as APA 7 lays it out: title and abstract on the first page; the text from a new page under the title
+ * again, without an «Вступ» heading (unless the journal named it); other sections — centred bold headings; paragraphs
+ * indented, the abstract not; "> " lines — block quotes. Figures and tables where they stand, or — if the journal
+ * wants them at the end — tables, then figures, each from a new page.
+ */
+export function exportBlocks(a: Article, method: Method, mid: string): Block[] {
+  const secs = sectionsOf(a, method), keys = secs.map((x) => x.key), en = a.journal?.lang === "en", nums = numbers(a, keys);
+  const atEnd = !!a.journal?.floatsAtEnd;
+  const title = a.title.trim() || (en ? "Untitled" : "Без назви");
+  const out: Block[] = [{ k: "title", text: title, brk: false }], tabs: Block[] = [], figs: Block[] = [];
+  let body = false;
+  for (const sec of secs) {
+    const ps = split(a.texts[sec.key] ?? "");
+    if (!ps.some((p) => ("id" in p ? a.floats?.[p.id] : p.text.trim()))) continue;
+    const abstract = sec.key === "abstract";
+    if (!abstract && !body) {
+      body = true;
+      if (out.length > 1) out.push({ k: "title", text: title, brk: true });
+    }
+    if (!(sec.key === "intro" && !a.journal?.sections?.find((c) => c.key === "intro")?.name?.trim())) out.push({ k: "h1", text: sec.name });
+    for (const p of ps) {
+      if ("text" in p) {
+        for (const line of p.text.split(/\n+/).map((x) => x.trim()).filter(Boolean)) {
+          out.push(line.startsWith(">") ? { k: "quote", text: line.replace(/^>\s*/, "") } : { k: "p", text: line, indent: !abstract });
+        }
+        continue;
+      }
+      const f = a.floats?.[p.id];
+      if (!f) continue;
+      const n = nums.get(p.id);
+      const b: Block = f.kind === "fig"
+        ? { k: "fig", label: `${en ? "Figure" : "Рисунок"} ${n}`, f, brk: atEnd }
+        : { k: "tab", label: `${en ? "Table" : "Таблиця"} ${n}`, t: f, brk: atEnd, ...tableCells(f, en, mid) };
+      (atEnd ? (f.kind === "fig" ? figs : tabs) : out).push(b);
+    }
+  }
+  return [...out, ...tabs, ...figs];
+}
+
 export const emptyArticle = (): Article => ({ title: "", texts: {} });
 
 const EN: Record<string, string> = { abstract: "Abstract", intro: "Introduction", method: "Method", discussion: "Discussion" };

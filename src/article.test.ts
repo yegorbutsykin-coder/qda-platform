@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countWords, dropFloat, formatQuote, insertAt, join, moveFloat, numbers, putFloat, putText, settle, split, type Float, journalChanged, resetJournal, sectionDef, sectionsOf, type Article } from "./article";
+import { countWords, dropFloat, exportBlocks, formatQuote, insertAt, join, moveFloat, numbers, putFloat, putText, settle, split, type Block, type Float, journalChanged, resetJournal, sectionDef, sectionsOf, type Article } from "./article";
 
 describe("article", () => {
   it("counts words like a journal: apostrophes and hyphens inside a word", () => {
@@ -81,5 +81,29 @@ describe("figures and tables in the text", () => {
   it("text goes into the piece the caret is in", () => {
     const a = { title: "", texts: { intro: "A\n⟦fig:x⟧\nB", results: "" }, floats: { x: fig } };
     expect(putText(a, keys, { sec: "intro", seg: 1, pos: 1 }, { text: "(див. Рисунок 1)", block: false }).article.texts.intro).toBe("A\n⟦fig:x⟧\nB (див. Рисунок 1)");
+  });
+});
+
+describe("export layout by APA 7", () => {
+  const fig = { kind: "fig", title: "Т", note: "", svg: "", w: 1, h: 1, landscape: false, bw: false, tool: "matrix", ivs: [], whose: "all", sig: "" } as Float;
+  const tab = { kind: "tab", variant: "themes", title: "Т", note: "", showPeople: true, showQuote: false, cols: ["Марта", "Ліна"], n: 2, names: {}, picks: {}, sig: "",
+    rows: [{ sup: "С", id: "k1", name: "Втрата", people: ["Марта"], cells: [1, 0] }, { id: "k2", name: "Час", people: ["Марта", "Ліна"], cells: [1, 1] }] } as Float;
+  const a: Article = { title: "Назва", texts: { abstract: "Коротко.", intro: "Абзац один.\nАбзац два.\n⟦fig:f⟧\n> Довга цитата.", results: "\n⟦tab:t⟧\nТекст." }, floats: { f: fig, t: tab } };
+  it("title and abstract first; the text from a new page under the title, without «Вступ»", () => {
+    const b = exportBlocks(a, "РТА", "Тема");
+    expect(b.slice(0, 7).map((x) => x.k + ("text" in x ? ":" + x.text : ""))).toEqual(["title:Назва", "h1:Анотація", "p:Коротко.", "title:Назва", "p:Абзац один.", "p:Абзац два.", "fig"]);
+    expect(b[2]).toMatchObject({ indent: false });
+    expect(b[3]).toMatchObject({ brk: true });
+    expect(b[7]).toEqual({ k: "quote", text: "Довга цитата." });
+    expect(b[8]).toEqual({ k: "h1", text: "Теми" });
+    const t = b[9] as Extract<Block, { k: "tab" }>;
+    expect(t.label).toBe("Таблиця 1");
+    expect(t.rows).toEqual([{ cells: ["С"], group: true }, { cells: ["Втрата", "Марта (1 з 2)"], group: false }, { cells: ["Інші теми"], group: true }, { cells: ["Час", "Марта, Ліна (2 з 2)"], group: false }]);
+  });
+  it("at the end: tables, then figures, each from a new page", () => {
+    const b = exportBlocks({ ...a, journal: { name: "", lang: "en", other: "", floatsAtEnd: true } }, "РТА", "Тема");
+    expect(b.slice(-2).map((x) => ("label" in x ? x.label : x.k))).toEqual(["Table 1", "Figure 1"]);
+    expect(b.slice(-2).every((x) => "brk" in x && x.brk)).toBe(true);
+    expect(b.filter((x) => x.k === "h1").map((x) => (x as { text: string }).text)).toEqual(["Abstract", "Themes"]);
   });
 });

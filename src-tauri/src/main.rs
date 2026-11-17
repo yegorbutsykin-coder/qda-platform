@@ -614,6 +614,14 @@ async fn save_figure_docx(path: String, png: String, width_emu: u64, height_emu:
     textfile::write_figure_docx(std::path::Path::new(&path), &textfile::Figure { label: &label, title: &title, note_label: &note_label, note: &note, png: &png, width_emu, height_emu, landscape })
 }
 
+/// The article as a Word file by APA 7; figures come as PNG (base64), referenced by index from the blocks.
+#[tauri::command]
+async fn save_article_docx(path: String, blocks: Vec<textfile::Block>, images: Vec<String>) -> Res<()> {
+    use base64::Engine;
+    let images = images.iter().map(|b| base64::engine::general_purpose::STANDARD.decode(b).map_err(|_| "bad_input".to_string())).collect::<Result<Vec<_>, _>>()?;
+    textfile::write_article_docx(std::path::Path::new(&path), &blocks, &images)
+}
+
 /// A figure from the visual analysis: SVG text or PNG bytes (base64), to a file the person chose.
 #[tauri::command]
 async fn save_figure(path: String, svg: Option<String>, png: Option<String>) -> Res<()> {
@@ -822,7 +830,8 @@ fn main() {
             create_copy_project,
             delete_project,
             save_figure,
-            save_figure_docx
+            save_figure_docx,
+            save_article_docx
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

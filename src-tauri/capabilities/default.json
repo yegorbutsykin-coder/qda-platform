@@ -1,6 +1,13 @@
 {
   "identifier": "default",
-  "description": "Main window: system Open and Save dialogs only; all file work goes through the engine",
-  "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]
+  "description": "Main window: system Open and Save dialogs, the system print dialog (PDF of the article); all file work goes through the engine",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "core:webview:allow-print"
+  ]
 }

@@ -1,10 +1,12 @@
 // Stage 5: the «Стаття» tab — title, sections by method with hints, word counts, supervisor remarks, quotes from coding.
+import { createPortal } from "react-dom";
 import { Fragment, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import {
-  countWords, dataSig, dropFloat, formatQuote, fragKey, join, journalChanged, METHODS, moveFloat, numbers, putFloat, putText, resetJournal, resultsKey,
-  sectionsOf, split, themeTable, totalLimit, type Article, type Caret, type FigFloat, type Float, type Journal, type Method, type SectionConf, type TabFloat,
+  countWords, dataSig, dropFloat, exportBlocks, formatQuote, fragKey, join, journalChanged, METHODS, moveFloat, numbers, putFloat, putText, resetJournal, resultsKey,
+  sectionsOf, split, themeTable, totalLimit, type Article, type Block, type Caret, type FigFloat, type Float, type Journal, type Method, type SectionConf, type TabFloat,
 } from "./article";
 import { LEVELS } from "./coding";
+import { saveDocx, saveFigures, wideTable } from "./exportArticle";
 import { initialsOf, newId, type Note, type Private, type Shared } from "./model";
 import { quote } from "./coding";
 import { codesByCategory, fragments, type Frag } from "./figures";
@@ -15,6 +17,41 @@ const svgUrl = (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURICom
 const tableTitle = (v: TabFloat["variant"], supers: boolean, en: boolean) => v === "presence"
   ? (en ? "Presence of Themes Across Participants" : "Присутність тем в інтерв'ю учасників(ць)")
   : en ? (supers ? "Superordinate Themes, Themes, and Illustrative Quotes" : "Themes and Illustrative Quotes") : (supers ? "Супертеми, теми та ілюстративні цитати" : "Теми та ілюстративні цитати");
+
+/** "N = 7 …" with the N in italics (APA sets statistical symbols in italics). */
+const Note = (p: { label: string; text: string }) => (
+  <p className="apanote"><i>{p.label}</i> {/^N[ \u00a0]/.test(p.text) ? <><i>N</i>{p.text.slice(1)}</> : p.text}</p>
+);
+
+/** The article as it is printed (and saved as PDF): only this is visible on paper. */
+function PrintDoc(props: { blocks: Block[]; en: boolean }) {
+  const note = props.en ? "Note." : "Примітка.";
+  return (
+    <div className="printdoc" aria-hidden="true">
+      {props.blocks.map((b, i) => {
+        if (b.k === "title") return <p key={i} className={"ptitle" + (b.brk ? " pbreak" : "")}>{b.text}</p>;
+        if (b.k === "h1") return <h1 key={i}>{b.text}</h1>;
+        if (b.k === "p") return <p key={i} className={b.indent ? "pind" : ""}>{b.text}</p>;
+        if (b.k === "quote") return <blockquote key={i}>{b.text}</blockquote>;
+        const f = b.k === "fig" ? b.f : b.t;
+        const wide = b.k === "fig" ? b.f.landscape : wideTable(b.head.length);
+        return (
+          <div key={i} className={"pfloat" + (b.brk ? " pbreak" : "") + (wide ? " pwide" : "")}>
+            <p className="apanum">{b.label}</p>
+            <p className="apatitle">{f.title}</p>
+            {b.k === "fig" ? <img src={svgUrl(b.f.svg)} alt="" style={{ width: `${b.f.w}in` }} /> : (
+              <table className="apatable">
+                <thead><tr>{b.head.map((h, j) => <th key={j}>{h}</th>)}</tr></thead>
+                <tbody>{b.rows.map((r, j) => <tr key={j} className={r.group ? "tsup" : ""}>{r.group ? <td colSpan={b.head.length}>{r.cells[0]}</td> : r.cells.map((c, k) => <td key={k}>{c}</td>)}</tr>)}</tbody>
+              </table>
+            )}
+            {f.note.trim() && <Note label={note} text={f.note} />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 const grow = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } };
 
@@ -42,7 +79,8 @@ export default function ArticleView(props: {
   const [remark, setRemarkText] = useState("");
   const selection = useRef<Record<string, string>>({});
   const caret = props.caret; // where a quote, figure or reference goes; outlives this view
-  const [picking, setPicking] = useState<string | null>(null); // "table id|category id" choosing a quote
+  const [picking, setPicking] = useState<string | null>(null);
+  const [out, setOut] = useState(""); // export status line // "table id|category id" choosing a quote
   const [quotes, setQuotes] = useState(false);
   const [qcode, setQcode] = useState<string | null>(null);
   const [placed, setPlaced] = useState("");
@@ -132,6 +170,25 @@ export default function ArticleView(props: {
     return fragments(props.shared.apps.filter((a) => codes.has(a.code))).filter(isVoice).map((f) => ({ f, q: fragText(f) })).filter((x) => x.q);
   };
 
+  const blocks = useMemo(() => exportBlocks(draft, fmt, levels.mid), [draft, fmt, levels.mid]);
+  const hasFigs = blocks.some((b) => b.k === "fig");
+  async function toWord() {
+    flush();
+    setOut("Готую Word…");
+    try { const f = await saveDocx(latest.current, fmt, levels.mid); setOut(f ? `Збережено: ${f}` : ""); }
+    catch (e) { setOut(`Не вдалося зберегти: ${e}`); }
+  }
+  async function figuresOut() {
+    flush();
+    try { const n = await saveFigures(latest.current, fmt); setOut(n > 0 ? `Збережено рисунків: ${n} — кожен як PNG (300 dpi) і SVG.` : ""); }
+    catch (e) { setOut(`Не вдалося зберегти: ${e}`); }
+  }
+  function toPdf() {
+    flush();
+    setOut("У вікні друку оберіть «Зберегти як PDF»: на Mac — кнопка «PDF» унизу вікна, на Windows — принтер «Microsoft Print to PDF».");
+    window.print();
+  }
+
   // Called as functions, not mounted as components: a component declared here would be new on every render and lose the cursor.
   function FloatView(fp: { id: string; f: Float }) {
     const { id, f } = fp, n = nums.get(id), ro = props.readOnly;
@@ -145,7 +202,7 @@ export default function ArticleView(props: {
           {f.kind === "fig"
             ? <img src={svgUrl(f.svg)} alt={f.title} style={{ width: `${f.w * 72}px`, maxWidth: "100%" }} />
             : TableView({ id, t: f })}
-          {ro ? (f.note.trim() && <p className="apanote"><i>{en ? "Note." : "Примітка."}</i> {f.note}</p>) : (
+          {ro ? (f.note.trim() && <Note label={en ? "Note." : "Примітка."} text={f.note} />) : (
             <label className="row" style={{ gap: 6, alignItems: "baseline", flexWrap: "nowrap" }}><i style={{ flex: "none" }}>{en ? "Note." : "Примітка."}</i>
               <textarea className="apanote apain grow" rows={1} ref={grow} onInput={(e) => grow(e.currentTarget)} value={f.note} onChange={(e) => setFloat(id, { ...f, note: e.target.value })} aria-label={`Примітка: ${label(f)} ${n}`} /></label>
           )}
@@ -269,6 +326,15 @@ export default function ArticleView(props: {
           </div>
           <span className="small grow">Змінює назви й підказки розділів; текст не втрачається.</span>
         </div>
+        <div className="stack" style={{ gap: 6 }}>
+          <div className="row" style={{ gap: 10 }}>
+            <span className="small">Експорт за APA 7:</span>
+            <button className="btn sm" onClick={toWord}>Word (.docx)…</button>
+            <button className="btn sm" onClick={toPdf}>PDF через друк…</button>
+            {hasFigs && <button className="btn sm" onClick={figuresOut}>Рисунки окремими файлами…</button>}
+          </div>
+          {out && <span className="small" role="status">{out}</span>}
+        </div>
         {!panel && (j.name || j.other.trim()) && (
           <div className="stack" style={{ gap: 4 }}>
             {j.name && <span className="label">{j.name}</span>}
@@ -373,7 +439,8 @@ export default function ArticleView(props: {
             </section>
           );
         })}
-        <p className="small">Рисунки й таблиці не входять у ліміт слів. Список літератури з перевіркою за APA 7 з'явиться на етапі 6; експорт у Word і PDF — на кроці 5.5.</p>
+        {createPortal(<PrintDoc blocks={blocks} en={en} />, document.body)}
+        <p className="small">Рисунки й таблиці не входять у ліміт слів. Список літератури з перевіркою за APA 7 з'явиться на етапі 6.</p>
 
       </div>
 

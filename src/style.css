@@ -349,3 +349,21 @@ textarea.arttext { width: 100%; resize: none; overflow: hidden; font-size: 14px;
 .artremark { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-left: 2px solid var(--accent); background: #fff; }
 .jrow { display: grid; grid-template-columns: 22px 200px minmax(0, 1fr) 90px 70px; gap: 8px; align-items: start; }
 .link:disabled { opacity: 0.35; cursor: default; text-decoration: none; }
+
+/* The article on paper (and in PDF): APA 7 — A4, 1-inch margins, Times New Roman 12, double spacing. */
+.printdoc { display: none; }
+@media print {
+  @page { size: A4; margin: 2.54cm; }
+  #root { display: none !important; }
+  html, body { background: #fff !important; }
+  .printdoc { display: block; font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 2; color: #000; }
+  .printdoc p, .printdoc h1, .printdoc blockquote { margin: 0; }
+  .printdoc .pind { text-indent: 0.5in; }
+  .printdoc .ptitle, .printdoc h1 { text-align: center; font-weight: 700; font-size: 12pt; break-after: avoid; }
+  .printdoc blockquote { padding-left: 0.5in; }
+  .printdoc .pbreak { break-before: page; }
+  .printdoc .pfloat { break-inside: avoid; }
+  .printdoc .pfloat img { max-width: 100%; display: block; }
+  .printdoc .apatable { font-size: 12pt; line-height: 1.3; }
+  .printdoc .apatable th, .printdoc .apatable td { padding: 4pt 8pt 4pt 0; }
+}

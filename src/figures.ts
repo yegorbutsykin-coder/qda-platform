@@ -134,3 +134,47 @@ export function slice(r: Rect, weights: number[]): Rect[] {
     return out;
   });
 }
+
+// ---------- figures for an article (APA 7) ----------
+
+export type Lang = "uk" | "en";
+const UK_LOC = ["", "одному", "двох", "трьох", "чотирьох", "п'яти", "шести", "семи", "восьми", "дев'яти"];
+const EN = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+/** APA: numbers below 10 in words. "у семи інтерв'ю" / "Across Seven Interviews". */
+export const inN = (n: number, lang: Lang) =>
+  lang === "uk" ? `у ${n < 10 ? UK_LOC[n] : n} інтерв'ю` : `Across ${n < 10 ? EN[n][0].toUpperCase() + EN[n].slice(1) : n} Interview${n === 1 ? "" : "s"}`;
+
+const TITLES: Record<string, (n: number, lang: Lang) => string> = {
+  matrix: (n, l) => (l === "uk" ? `Кількість закодованих фрагментів за кодами й учасниками(цями) ${inN(n, l)}` : `Coded Segments by Code and Participant ${inN(n, l)}`),
+  cooc: (n, l) => (l === "uk" ? `Спільна поява кодів ${inN(n, l)}` : `Code Co-Occurrence ${inN(n, l)}`),
+  tree: (_n, l) => (l === "uk" ? "Ієрархія тем і кодів" : "Hierarchy of Themes and Codes"),
+  strip: (n, l) => (l === "uk" ? `Розташування закодованих фрагментів ${inN(n, l)}` : `Position of Coded Segments ${inN(n, l)}`),
+  saturation: (n, l) => (l === "uk" ? `Нові й накопичені коди ${inN(n, l)}` : `New and Cumulative Codes ${inN(n, l)}`),
+  agreement: (_n, l) => (l === "uk" ? "Збіг кодування між дослідниками(цями)" : "Overlap in Coding Between Researchers"),
+  people: (_n, l) => (l === "uk" ? "Використання кодів дослідниками(цями)" : "Use of Codes by Researcher"),
+};
+const READ: Record<string, [string, string]> = {
+  matrix: ["Число в клітинці — кількість фрагментів; темніший колір — більше фрагментів.", "Cell values show the number of coded segments; darker shading indicates more segments."],
+  cooc: ["Розмір кола — кількість фрагментів коду; товщина й число лінії — скільки разів коди позначено на тих самих словах.", "Circle size shows the number of segments per code; line width and labels show how often two codes were applied to the same words."],
+  tree: ["Площа блока пропорційна кількості закодованих фрагментів.", "Block area is proportional to the number of coded segments."],
+  strip: ["Кожна лінія — інтерв'ю на часі запису; позначка — закодований фрагмент.", "Each line represents an interview along its recording time; marks show coded segments."],
+  saturation: ["Угорі — нові коди в кожному інтерв'ю, унизу — накопичена кількість кодів.", "Top: new codes in each interview; bottom: cumulative number of codes."],
+  agreement: ["Частка фрагментів, позначених трьома й більше, двома чи одним(ною) дослідником(цею).", "Share of segments coded by three or more, two, or one researcher."],
+  people: ["Число — кількість фрагментів, позначених кодом.", "Values show the number of segments coded."],
+};
+const PEOPLE_UK = ["", "одного(ї)", "двох", "трьох", "чотирьох", "п'яти", "шести", "семи", "восьми", "дев'яти"];
+
+export function apaTitle(tool: string, n: number, lang: Lang): string {
+  return (TITLES[tool] ?? (() => ""))(n, lang);
+}
+
+/** General note: sample, whose coding, how to read the figure, pseudonyms. */
+export function apaNote(tool: string, n: number, coders: number, lang: Lang): string {
+  const who = lang === "uk"
+    ? (coders === 1 ? "кодування одного(ї) дослідника(ці)" : `кодування ${coders < 10 ? PEOPLE_UK[coders] : coders} дослідників(ць)`)
+    : `coding by ${coders < 10 ? EN[coders] : coders} researcher${coders === 1 ? "" : "s"}`;
+  const read = READ[tool]?.[lang === "uk" ? 0 : 1] ?? "";
+  return lang === "uk"
+    ? `N = ${n} інтерв'ю; ${who}. ${read} Імена учасників(ць) змінено.`
+    : `N = ${n} interviews; ${who}. ${read} Participant names are pseudonyms.`;
+}

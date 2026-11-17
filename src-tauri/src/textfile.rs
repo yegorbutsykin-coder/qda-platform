@@ -136,8 +136,6 @@ fn run(text: &str, style: &str) -> String {
 /// Writes a plain Word document: title, card line, then one paragraph per replica
 /// ("00:01:23  Speaker: text"). Readable back by `read`.
 pub fn write_docx(path: &Path, title: &str, meta: &str, lines: &[Line]) -> Result<(), String> {
-    use std::io::Write;
-    use zip::write::SimpleFileOptions;
     if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("docx")) != Some(true) {
         return Err("not_docx".into());
     }
@@ -161,18 +159,31 @@ pub fn write_docx(path: &Path, title: &str, meta: &str, lines: &[Line]) -> Resul
     let doc = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1418" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr></w:body></w:document>"#
     );
-    let files = [
-        ("[Content_Types].xml", r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#.to_string()),
-        ("_rels/.rels", r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#.to_string()),
-        ("word/document.xml", doc),
+    pack_docx(path, &doc, None)
+}
+
+const W_NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing""#;
+
+/// A Word file around `doc` (word/document.xml), with one PNG picture as rIdImg1 if given.
+fn pack_docx(path: &Path, doc: &str, png: Option<&[u8]>) -> Result<(), String> {
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+    let mut files: Vec<(&str, Vec<u8>)> = vec![
+        ("[Content_Types].xml", r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#.into()),
+        ("_rels/.rels", r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#.into()),
+        ("word/document.xml", doc.as_bytes().to_vec()),
     ];
+    if let Some(img) = png {
+        files.push(("word/_rels/document.xml.rels", r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdImg1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/figure1.png"/></Relationships>"#.into()));
+        files.push(("word/media/figure1.png", img.to_vec()));
+    }
     // Written next to the target first, so a failure never leaves half a file under the chosen name.
     let tmp = path.with_extension("docx.part");
     let result = (|| -> Result<(), String> {
         let mut z = zip::ZipWriter::new(fs::File::create(&tmp).map_err(|e| format!("io:{e}"))?);
         for (name, content) in files {
             z.start_file(name, SimpleFileOptions::default()).map_err(|e| e.to_string())?;
-            z.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+            z.write_all(&content).map_err(|e| e.to_string())?;
         }
         z.finish().map_err(|e| e.to_string())?;
         fs::rename(&tmp, path).map_err(|e| format!("io:{e}"))
@@ -181,6 +192,49 @@ pub fn write_docx(path: &Path, title: &str, meta: &str, lines: &[Line]) -> Resul
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// A figure laid out by APA 7: number in bold, title in italics on the next line, the picture,
+/// then "Note." in italics with the note. Times New Roman 12, double spacing, flush left.
+/// A leading "N" in the note (as in "N = 7") is set in italics, as APA asks for statistical symbols.
+pub struct Figure<'a> {
+    pub label: &'a str,
+    pub title: &'a str,
+    pub note_label: &'a str,
+    pub note: &'a str,
+    pub png: &'a [u8],
+    pub width_emu: u64,
+    pub height_emu: u64,
+    pub landscape: bool,
+}
+
+pub fn write_figure_docx(path: &Path, f: &Figure) -> Result<(), String> {
+    if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("docx")) != Some(true) || !f.png.starts_with(b"\x89PNG") {
+        return Err("bad_input".into());
+    }
+    let font = r#"<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/>"#;
+    let p = |runs: String| format!(r#"<w:p><w:pPr><w:spacing w:after="0" w:line="480" w:lineRule="auto"/></w:pPr>{runs}</w:p>"#);
+    let note_runs = match f.note.strip_prefix('N').filter(|r| r.starts_with(' ') || r.starts_with('\u{a0}')) {
+        Some(rest) => run("N", &format!("{font}<w:i/>")) + &run(rest, font),
+        None => run(f.note, font),
+    };
+    let (w, h) = (f.width_emu, f.height_emu);
+    let picture = format!(
+        r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{w}" cy="{h}"/><wp:docPr id="1" name="{label}" descr="{title}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="figure1.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdImg1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{w}" cy="{h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#,
+        label = esc(f.label), title = esc(f.title)
+    );
+    let mut body = p(run(f.label, &format!("{font}<w:b/>")));
+    body += &p(run(f.title, &format!("{font}<w:i/>")));
+    body += &p(picture);
+    if !f.note.trim().is_empty() {
+        body += &p(run(&format!("{} ", f.note_label), &format!("{font}<w:i/>")) + &note_runs);
+    }
+    // A4, margins 2.54 cm (APA: 1 inch); a wide figure goes on a landscape page.
+    let page = if f.landscape { r#"<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>"# } else { r#"<w:pgSz w:w="11906" w:h="16838"/>"# };
+    let doc = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W_NS}><w:body>{body}<w:sectPr>{page}<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr></w:body></w:document>"#
+    );
+    pack_docx(path, &doc, Some(f.png))
 }
 
 #[cfg(test)]
@@ -201,5 +255,24 @@ mod export_tests {
         assert!(text.contains("00:00:03  І: Розкажіть, з чого <все> почалося & як."), "{text}");
         assert!(text.contains("Ну, це було в березні."));
         assert!(write_docx(Path::new("/tmp/x.txt"), "a", "", &[]).is_err());
+    }
+
+    #[test]
+    fn figure_docx_has_apa_parts_and_the_picture() {
+        let path = std::env::temp_dir().join(format!("qda-figure-{}.docx", std::process::id()));
+        let png = b"\x89PNG\r\n\x1a\nfake";
+        let f = Figure { label: "Рисунок 1", title: "Спільна поява кодів у семи інтерв'ю", note_label: "Примітка.", note: "N = 7 інтерв'ю; кодування двох дослідників(ць).", png, width_emu: 5_000_000, height_emu: 3_000_000, landscape: false };
+        write_figure_docx(&path, &f).unwrap();
+        let text = read(&path).unwrap();
+        assert!(text.contains("Рисунок 1") && text.contains("Спільна поява кодів у семи інтерв'ю") && text.contains("Примітка. N = 7 інтерв'ю"), "{text}");
+        let mut z = zip::ZipArchive::new(fs::File::open(&path).unwrap()).unwrap();
+        let mut img = Vec::new();
+        std::io::Read::read_to_end(&mut z.by_name("word/media/figure1.png").unwrap(), &mut img).unwrap();
+        assert_eq!(img, png);
+        let mut doc = String::new();
+        std::io::Read::read_to_string(&mut z.by_name("word/document.xml").unwrap(), &mut doc).unwrap();
+        assert!(doc.contains(r#"<w:b/></w:rPr><w:t xml:space="preserve">Рисунок 1"#) && doc.contains(r#"<w:i/></w:rPr><w:t xml:space="preserve">N</w:t>"#));
+        fs::remove_file(&path).unwrap();
+        assert!(write_figure_docx(Path::new("/tmp/x.docx"), &Figure { png: b"GIF8", ..f }).is_err());
     }
 }

@@ -287,3 +287,9 @@ textarea.edittext { resize: none; }
 .chip { font: 12px var(--mono); border: 1px solid var(--line); background: none; padding: 2px 7px; cursor: pointer; color: var(--muted); }
 .chip.on { border-color: var(--ink); color: var(--ink); background: var(--panel); }
 .backfloat { position: fixed; right: 24px; bottom: 20px; z-index: 40; gap: 10px; background: var(--bg); padding: 8px 10px; border: 1px solid var(--line); box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+
+/* APA 7 figure preview: Times New Roman 12, double spacing, flush left */
+.apapage { background: #fff; border: 1px solid var(--line2); padding: 28px 32px; font-family: "Times New Roman", Times, serif; font-size: 16px; line-height: 2; color: #000; }
+.apapage p { margin: 0; }
+.apanum { font-weight: 700; }
+.apatitle { font-style: italic; }

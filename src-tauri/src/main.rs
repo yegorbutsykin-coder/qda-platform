@@ -605,6 +605,15 @@ async fn delete_project(app: AppHandle, state: State<'_, AppState>, id: String) 
     })
 }
 
+/// A figure for an article, laid out by APA 7, in a Word file (step 4, ahead of the article itself).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn save_figure_docx(path: String, png: String, width_emu: u64, height_emu: u64, label: String, title: String, note_label: String, note: String, landscape: bool) -> Res<()> {
+    use base64::Engine;
+    let png = base64::engine::general_purpose::STANDARD.decode(png).map_err(|_| "bad_input")?;
+    textfile::write_figure_docx(std::path::Path::new(&path), &textfile::Figure { label: &label, title: &title, note_label: &note_label, note: &note, png: &png, width_emu, height_emu, landscape })
+}
+
 /// A figure from the visual analysis: SVG text or PNG bytes (base64), to a file the person chose.
 #[tauri::command]
 async fn save_figure(path: String, svg: Option<String>, png: Option<String>) -> Res<()> {
@@ -812,7 +821,8 @@ fn main() {
             open_pack,
             create_copy_project,
             delete_project,
-            save_figure
+            save_figure,
+            save_figure_docx
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Платформа QDA");

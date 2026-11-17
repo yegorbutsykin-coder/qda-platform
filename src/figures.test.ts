@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agreement, byPerson, codesByCategory, cooccurrence, fragments, matrix, saturationCurve, saturationWords, slice } from "./figures";
+import { agreement, apaNote, apaTitle, byPerson, codesByCategory, cooccurrence, fragments, matrix, saturationCurve, saturationWords, slice } from "./figures";
 import type { App, Code } from "./coding";
 
 const A = (id: string, code: string, iv: string, s: number, e: number, by = "p1", rep = 0): App => ({ id, code, iv, rep, s, e, by, at: 0 });
@@ -41,5 +41,17 @@ describe("connections", () => {
   });
   it("slices a rectangle by weight along the longer side", () => {
     expect(slice({ x: 0, y: 0, w: 100, h: 50 }, [1, 3])).toEqual([{ x: 0, y: 0, w: 25, h: 50 }, { x: 25, y: 0, w: 75, h: 50 }]);
+  });
+});
+
+describe("APA 7 figure texts", () => {
+  it("numbers below ten in words, in both languages", () => {
+    expect(apaTitle("cooc", 7, "uk")).toBe("Спільна поява кодів у семи інтерв'ю");
+    expect(apaTitle("cooc", 12, "uk")).toBe("Спільна поява кодів у 12 інтерв'ю");
+    expect(apaTitle("cooc", 1, "en")).toBe("Code Co-Occurrence Across One Interview");
+  });
+  it("a general note with N, whose coding and pseudonyms", () => {
+    expect(apaNote("cooc", 7, 2, "uk")).toBe("N = 7 інтерв'ю; кодування двох дослідників(ць). Розмір кола — кількість фрагментів коду; товщина й число лінії — скільки разів коди позначено на тих самих словах. Імена учасників(ць) змінено.");
+    expect(apaNote("matrix", 3, 1, "en")).toMatch(/^N = 3 interviews; coding by one researcher\. .* Participant names are pseudonyms\.$/);
   });
 });

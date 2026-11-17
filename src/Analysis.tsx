@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { agreement, byPerson, codesByCategory, cooccurrence, fragments, matrix, saturationCurve, saturationWords, slice, type Rect } from "./figures";
 import { seconds } from "./Player";
+import ApaFigure from "./ApaFigure";
 import { applyDict } from "./text";
 import { LEVELS, quote, type Code } from "./coding";
 import { initialsOf, pad, type Private, type Shared } from "./model";
@@ -59,6 +60,16 @@ function Heat(props: { groups: { cat: { name: string; color: string } | null; co
   );
 }
 
+/** Category colours used in a figure, as APA wants the legend inside the figure. */
+function Legend(props: { items: { name: string; color: string }[]; x: number; y: number }) {
+  let x = props.x;
+  return <g>{props.items.map((k) => {
+    const el = <g key={k.name}><rect x={x} y={props.y - 9} width={10} height={10} fill={k.color} /><text x={x + 14} y={props.y} fontSize={11} fill={MUTED}>{k.name}</text></g>;
+    x += 24 + k.name.length * 6.6;
+    return el;
+  })}</g>;
+}
+
 /** «Зберегти рисунок…»: the SVG as it is, or a PNG three times the screen size (≈ 300 dpi when printed at screen size). */
 async function saveFigure(svg: SVGSVGElement, name: string): Promise<string> {
   const path = await save({ title: "Зберегти рисунок", defaultPath: `${name}.svg`, filters: [{ name: "SVG (векторний)", extensions: ["svg"] }, { name: "PNG", extensions: ["png"] }] });
@@ -88,6 +99,7 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
   const [whose, setWhose] = useState("all");
   const [saved, setSaved] = useState("");
   const [picked, setPicked] = useState<number | null>(null); // a mark on the interview strip
+  const [apa, setApa] = useState(false);
   const fig = useRef<HTMLDivElement>(null);
   const coders = [...new Set(s.apps.map((a) => a.by))];
   const order = s.interviews.filter((x) => ivs.has(x.id));
@@ -96,6 +108,11 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
   const groups = codesByCategory(s.codes.filter((c) => used.has(c.id)), s.cats);
   const catOf = (id: string) => s.cats.find((k) => k.id === s.codes.find((c) => c.id === id)?.cat);
   const name = (id: string) => s.codes.find((c) => c.id === id)?.name ?? "?";
+  const legendOf = (codes: string[]) => {
+    const used = new Set(codes);
+    const cats = s.cats.filter((k) => [...used].some((c) => catOf(c)?.id === k.id)).map((k) => ({ name: k.name, color: k.color }));
+    return [...cats, ...([...used].some((c) => !catOf(c)) ? [{ name: "без категорії", color: LOOSE }] : [])];
+  };
   const label = (x: { n: number; card: { pseudonym: string } }) => `${pad(x.n)} ${x.card.pseudonym}`;
   const toolName = GROUPS.flatMap((g) => g.tools).find((t) => t.id === tool)!.name;
 
@@ -139,7 +156,7 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
         {curve.map((c, i) => <g key={c.iv}><circle cx={x(i)} cy={y2(c.total)} r={3} fill={INK} /><text x={x(i)} y={y2(c.total) - 8} fontSize={11} textAnchor="middle" fill={INK}>{c.total}</text></g>)}
         <line x1={L - 6} x2={W - 10} y1={24 + H1 + GAP + H2} y2={24 + H1 + GAP + H2} stroke={LINE} />
         {[...s.cats.filter((k) => curve.some((c) => c.fresh.some((f) => catOf(f)?.id === k.id))), ...(curve.some((c) => c.fresh.some((f) => !catOf(f))) ? [{ id: "-", name: "без категорії", color: LOOSE }] : [])].map((k, i) => (
-          <g key={k.id}><rect x={L + i * 130} y={H - 17} width={9} height={9} fill={k.color} /><text x={L + i * 130 + 13} y={H - 9} fontSize={10} fill={MUTED}>{k.name.length > 18 ? k.name.slice(0, 17) + "…" : k.name}</text></g>
+          <g key={k.id}><rect x={L + i * 130} y={H - 17} width={9} height={9} fill={k.color} /><text x={L + i * 130 + 13} y={H - 9} fontSize={11} fill={MUTED}>{k.name.length > 18 ? k.name.slice(0, 17) + "…" : k.name}</text></g>
         ))}
         {order.map((v, i) => <text key={v.id} x={x(i)} y={H - 28} fontSize={11} textAnchor="middle" fill={MUTED}>{pad(v.n)}</text>)}
       </svg>
@@ -159,7 +176,7 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
     const R = Math.max(110, Math.min(230, nodes.length * 16)), C = { x: R + 170, y: R + 50 };
     const at = (i: number) => { const a = (i / nodes.length) * 2 * Math.PI - Math.PI / 2; return { x: C.x + R * Math.cos(a), y: C.y + R * Math.sin(a), a }; };
     const pos = new Map(nodes.map((c, i) => [c.id, at(i)]));
-    const W = 2 * (R + 170), H = 2 * (R + 50);
+    const W = 2 * (R + 170), H = 2 * (R + 50) + 24;
     const top = pairs[0];
     body = !pairs.length ? <span className="small">Жодні два коди ще не стоять на тих самих словах.</span> : (
       <svg xmlns="http://www.w3.org/2000/svg" width={W} height={H} viewBox={`0 0 ${W} ${H}`} fontFamily={FONT} role="img" aria-label={toolName}>
@@ -172,9 +189,11 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
           const mx = 0.25 * a.x + 0.5 * cx + 0.25 * b.x, my = 0.25 * a.y + 0.5 * cy + 0.25 * b.y;
           return <g key={k}>
             <path d={`M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`} fill="none" stroke={INK} strokeOpacity={0.25 + 0.6 * (n / maxE)} strokeWidth={1 + 5 * (n / maxE)} />
-            <text x={mx} y={my + 4} fontSize={10} textAnchor="middle" fill={INK} stroke="#fff" strokeWidth={3} paintOrder="stroke">{n}</text>
+            <rect x={mx - 7} y={my - 7} width={14} height={14} rx={2} fill="#fff" />
+            <text x={mx} y={my + 4} fontSize={11} textAnchor="middle" fill={INK}>{n}</text>
           </g>;
         })}
+        <Legend items={legendOf(nodes.map((c) => c.id))} x={20} y={H - 14} />
         {nodes.map((c) => {
           const p = pos.get(c.id)!, r = 4 + 12 * Math.sqrt((size.get(c.id) ?? 0) / maxN), right = Math.cos(p.a) >= 0;
           const lx = C.x + (R + r + 8) * Math.cos(p.a), ly = C.y + (R + r + 8) * Math.sin(p.a);
@@ -205,7 +224,7 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
     const sum = (codes: Code[]) => codes.reduce((a, c) => a + weight(c.id), 0);
     const tw = tops.map((t) => t.cats.reduce((a, k) => a + sum(k.codes), 0));
     const inset = (r: Rect, top: number): Rect => ({ x: r.x + 3, y: r.y + top, w: Math.max(0, r.w - 6), h: Math.max(0, r.h - top - 3) });
-    const fit = (t: string, w: number) => (t.length * 6.2 > w ? t.slice(0, Math.max(0, Math.floor(w / 6.2) - 1)) + (w > 20 ? "…" : "") : t);
+    const fit = (t: string, w: number) => (t.length * 6.6 > w ? t.slice(0, Math.max(0, Math.floor(w / 6.6) - 1)) + (w > 20 ? "…" : "") : t);
     body = !tops.length ? null : (
       <svg xmlns="http://www.w3.org/2000/svg" width={W} height={H} viewBox={`0 0 ${W} ${H}`} fontFamily={FONT} role="img" aria-label={toolName}>
         <rect width={W} height={H} fill="#fff" />
@@ -222,7 +241,7 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
                 {slice(inset(q, q.h > 34 ? 18 : 2), k.codes.map((c) => weight(c.id))).map((z, m) => (
                   <g key={k.codes[m].id}>
                     <rect x={z.x + 1} y={z.y + 1} width={Math.max(0, z.w - 2)} height={Math.max(0, z.h - 2)} fill={k.color} fillOpacity={0.35} />
-                    {z.h > 15 && z.w > 30 && <text x={z.x + 4} y={z.y + 13} fontSize={10} fill={INK}>{fit(`${k.codes[m].name} ${weight(k.codes[m].id)}`, z.w - 8)}</text>}
+                    {z.h > 15 && z.w > 30 && <text x={z.x + 4} y={z.y + 13} fontSize={11} fill={INK}>{fit(`${k.codes[m].name} ${weight(k.codes[m].id)}`, z.w - 8)}</text>}
                   </g>
                 ))}
               </g>;
@@ -249,13 +268,14 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
       return (t0 + k * Math.max(0, t1 - t0)) / l.total;
     };
     const longest = Math.max(1, ...order.map((v) => len(v.id).total));
-    const LW = 150, SW = 600, RH = 46, W = LW + SW + 20, H = 20 + order.length * RH + 10;
+    const LW = 150, SW = 600, RH = 46, W = LW + SW + 20, H = 20 + order.length * RH + 34;
     const list = frags.map((f, i) => ({ f, i })).filter(({ f }) => order.some((v) => v.id === f.iv));
     const pickedF = picked !== null ? frags[picked] : null;
     body = (
       <div className="stack" style={{ gap: 12 }}>
         <svg xmlns="http://www.w3.org/2000/svg" width={W} height={H} viewBox={`0 0 ${W} ${H}`} fontFamily={FONT} role="img" aria-label={toolName}>
           <rect width={W} height={H} fill="#fff" />
+          <Legend items={legendOf(list.map(({ f }) => f.code))} x={LW} y={H - 14} />
           {order.map((v, k) => {
             const y = 20 + k * RH + RH / 2, w = (len(v.id).total / longest) * SW;
             return <g key={v.id}>
@@ -362,8 +382,11 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
             <span className="small">Враховано: інтерв'ю — {order.length}, фрагментів — {tool === "people" ? s.apps.filter((a) => ivs.has(a.iv)).length : apps.length}{whose !== "all" && tool !== "people" ? ` · лише кодування ${initialsOf(s, whose)}` : ""}</span>
           </div>
           <button className="btn sm" onClick={doSave}>Зберегти рисунок…</button>
+          <button className="btn sm primary" onClick={() => setApa(true)} disabled={!body || typeof body === "string"}>Рисунок для статті (APA 7)…</button>
         </div>
         {saved && <span className="small" role="status">{saved}</span>}
+        {apa && <ApaFigure key={tool} tool={tool} n={order.length} coders={whose === "all" || tool === "people" ? Math.max(1, coders.length) : 1}
+          svg={() => fig.current?.querySelector("svg") ?? null} refresh={`${tool}|${[...ivs].join()}|${whose}|${apps.length}|${s.codes.length}`} onClose={() => setApa(false)} />}
         <div className="afig" ref={fig}>{body ?? <span className="small">Немає закодованих фрагментів у вибраних інтерв'ю.</span>}</div>
         {note && <p className="small" style={{ lineHeight: 1.7, maxWidth: 760 }}>{note}</p>}
       </section>

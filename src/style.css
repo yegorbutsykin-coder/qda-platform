@@ -327,3 +327,5 @@ textarea.arttext { width: 100%; resize: none; overflow: hidden; font-size: 14px;
 .wbar span { display: block; height: 4px; background: var(--ink); }
 .wcount.over .wbar span { background: #B3261E; }
 .artremark { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-left: 2px solid var(--accent); background: #fff; }
+.jrow { display: grid; grid-template-columns: 22px 200px minmax(0, 1fr) 90px 70px; gap: 8px; align-items: start; }
+.link:disabled { opacity: 0.35; cursor: default; text-decoration: none; }

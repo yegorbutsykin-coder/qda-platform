@@ -8,7 +8,7 @@ import Share from "./Share";
 import Merge, { PackPicker } from "./Merge";
 import Analysis from "./Analysis";
 import ArticleView from "./ArticleView";
-import { emptyArticle } from "./article";
+import { asMethod, emptyArticle, sectionsOf } from "./article";
 import { RemarksView, Remark, type RemarkPatch, type RemarkRow } from "./Remarks";
 import { updateCopy } from "./exchange";
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
@@ -204,7 +204,8 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const remarkRows: RemarkRow[] = Object.entries(shared.notes).filter(([, n]) => n.status).map(([key, n]) => {
     if (key.startsWith("art:")) {
       const sec = key.split(":")[1];
-      return { key, n, where: `стаття · ${{ abstract: "Анотація", intro: "Вступ", method: "Метод", results: "Результати", discussion: "Обговорення" }[sec] ?? sec}`, go: () => { setArtFocus(null); setTimeout(() => setArtFocus(sec)); setView("article"); } };
+      const secName = meta ? sectionsOf(shared.article ?? emptyArticle(), asMethod(shared.article?.format ?? meta.method)).find((x) => x.key === sec)?.name : undefined;
+      return { key, n, where: `стаття · ${secName ?? sec}`, go: () => { setArtFocus(null); setTimeout(() => setArtFocus(sec)); setView("article"); } };
     }
     if (key.startsWith("code:")) {
       const c = shared.codes.find((x) => x.id === key.split(":")[1]);

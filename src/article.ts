@@ -1,7 +1,10 @@
 // Stage 5: the article — sections by method (APA 7 and JARS–Qual), word counts.
 
 export type Method = "ІФА" | "Дескр." | "РТА";
-export type Article = { title: string; format?: Method; texts: Record<string, string> };
+/** One section as the journal wants it; empty fields take the method's default. */
+export type SectionConf = { key: string; name?: string; hint?: string; limit?: number };
+export type Journal = { name: string; lang: "uk" | "en"; total?: number; other: string; sections?: SectionConf[] };
+export type Article = { title: string; format?: Method; texts: Record<string, string>; journal?: Journal };
 export const SECTIONS = ["abstract", "intro", "method", "results", "discussion"] as const;
 export type SectionKey = (typeof SECTIONS)[number];
 export const TOTAL_LIMIT = 8000; // a common journal limit; the journal's own goes in «Вимоги журналу»
@@ -40,3 +43,34 @@ export function sectionDef(key: SectionKey, method: Method): Def {
 export const countWords = (t: string) => (t.match(/[\p{L}\p{N}]+(?:['’ʼ-][\p{L}\p{N}]+)*/gu) ?? []).length;
 
 export const emptyArticle = (): Article => ({ title: "", texts: {} });
+
+const EN: Record<string, string> = { abstract: "Abstract", intro: "Introduction", method: "Method", discussion: "Discussion" };
+const EN_RESULTS: Record<Method, string> = { "ІФА": "Group Experiential Themes", "Дескр.": "General Structure of the Experience", "РТА": "Themes" };
+
+export type Section = { key: string; name: string; hint: string; limit?: number; custom: boolean };
+
+/** The sections in the journal's order, with its names, requirements and limits over the method's defaults. */
+export function sectionsOf(a: Article, method: Method): Section[] {
+  const en = a.journal?.lang === "en";
+  const conf: SectionConf[] = a.journal?.sections ?? SECTIONS.map((key) => ({ key }));
+  return conf.map((c) => {
+    const std = (SECTIONS as readonly string[]).includes(c.key) ? sectionDef(c.key as SectionKey, method) : null;
+    const stdName = std ? (en ? (c.key === "results" ? EN_RESULTS[method] : EN[c.key]) : std.name) : "Новий розділ";
+    return { key: c.key, name: c.name?.trim() || stdName, hint: c.hint?.trim() || std?.hint || "", limit: c.limit ?? std?.limit, custom: !std };
+  });
+}
+
+/** 0 = no limit. */
+export const totalLimit = (a: Article) => a.journal?.total ?? TOTAL_LIMIT;
+
+/**
+ * «Скинути вимоги журналу»: APA's sections, hints, limits, order and the 8000 limit; the text stays.
+ * Added sections that have text move to the end; empty ones go. The journal's name, language and notes stay.
+ */
+export function resetJournal(a: Article): Article {
+  const added = (a.journal?.sections ?? []).filter((c) => !(SECTIONS as readonly string[]).includes(c.key) && (a.texts[c.key] ?? "").trim());
+  const j = a.journal ?? { name: "", lang: "uk" as const, other: "" };
+  return { ...a, journal: { name: j.name, lang: j.lang, other: j.other, ...(added.length ? { sections: [...SECTIONS.map((key) => ({ key })), ...added.map((c) => ({ key: c.key, name: c.name }))] } : {}) } };
+}
+
+export const journalChanged = (a: Article) => !!a.journal?.sections || (a.journal?.total !== undefined && a.journal.total !== TOTAL_LIMIT);

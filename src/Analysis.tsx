@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { dataSig, type FigFloat } from "./article";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { agreement, byPerson, codesByCategory, cooccurrence, fragments, groupBy, matrix, saturationCurve, saturationWords, shareWithCode, slice, type Rect } from "./figures";
+import { agreement, lanes, replicaTimes, byPerson, codesByCategory, cooccurrence, fragments, groupBy, matrix, saturationCurve, saturationWords, shareWithCode, slice, type Rect } from "./figures";
 import { seconds } from "./Player";
 import ApaFigure from "./ApaFigure";
 import { characteristic, kwic, PRONOUNS, pronouns, suggestTone, TENSES, tenses, TONES, type Tone } from "./language";
@@ -22,7 +22,10 @@ const GROUPS: { title: string; tools: { id: Tool; name: string; step?: string }[
 const FONT = "Inter, Helvetica, Arial, sans-serif";
 const INK = "#1E1E1C", MUTED = "#5F5D58", LINE = "#DCD9D1", LOOSE = "#9A968E";
 
-/** Rows of codes grouped by category × columns; darker = more. */
+/** Dark colours need white numbers on them. */
+const dark = (c: string) => { const n = parseInt(c.replace("#", ""), 16); return (0.3 * (n >> 16) + 0.59 * ((n >> 8) & 255) + 0.11 * (n & 255)) < 150; };
+
+/** Rows of codes grouped by category × columns; the colour of the category (or of the code itself), stronger = more. */
 function Heat(props: { groups: { cat: { name: string; color: string } | null; codes: Code[] }[]; cols: { id: string; label: string }[]; value: (code: string, col: string) => number; title: string; text?: (code: string, col: string) => string; max?: number }) {
   const { groups, cols } = props;
   const LW = 190, CW = 40, RH = 22, TOP = 96;
@@ -37,13 +40,15 @@ function Heat(props: { groups: { cat: { name: string; color: string } | null; co
     y += RH;
     for (const c of g.codes) {
       rows.push(<g key={c.id}>
+        {!g.cat && <rect x={0} y={y + 7} width={8} height={8} fill={c.color} />}
         <text x={16} y={y + 15} fontSize={12} fill={INK}>{c.name.length > 26 ? c.name.slice(0, 25) + "…" : c.name}</text>
         {cols.map((k, j) => {
           const v = props.value(c.id, k.id);
-          const t = v / max;
+          const t = v / max, color = g.cat?.color ?? c.color ?? INK;
+          // data-shade: on a black-and-white print the cell becomes grey of the same strength, not a pattern.
           return <g key={k.id}>
-            <rect x={LW + j * CW + 1} y={y + 1} width={CW - 2} height={RH - 2} fill={v ? INK : "none"} fillOpacity={v ? 0.12 + 0.88 * t : 0} stroke={LINE} />
-            {(v > 0 || props.text) && <text x={LW + j * CW + CW / 2} y={y + 15} fontSize={11} textAnchor="middle" fill={t > 0.5 ? "#fff" : INK}>{props.text ? props.text(c.id, k.id) : v}</text>}
+            <rect x={LW + j * CW + 1} y={y + 1} width={CW - 2} height={RH - 2} fill={v ? color : "none"} fillOpacity={v ? 0.15 + 0.85 * t : 0} stroke={LINE} data-shade={v ? "1" : undefined} />
+            {(v > 0 || props.text) && <text x={LW + j * CW + CW / 2} y={y + 15} fontSize={11} textAnchor="middle" fill={t > 0.55 && dark(color) ? "#fff" : INK}>{props.text ? props.text(c.id, k.id) : v}</text>}
           </g>;
         })}
       </g>);
@@ -165,11 +170,13 @@ export default function Analysis(props: {
   const used = new Set(apps.map((a) => a.code));
   const groups = codesByCategory(s.codes.filter((c) => used.has(c.id)), s.cats);
   const catOf = (id: string) => s.cats.find((k) => k.id === s.codes.find((c) => c.id === id)?.cat);
+  /** The category's colour; a code without a category keeps its own (not grey). */
+  const tint = (id: string) => catOf(id)?.color ?? s.codes.find((c) => c.id === id)?.color ?? LOOSE;
   const name = (id: string) => s.codes.find((c) => c.id === id)?.name ?? "?";
   const legendOf = (codes: string[]) => {
     const used = new Set(codes);
     const cats = s.cats.filter((k) => [...used].some((c) => catOf(c)?.id === k.id)).map((k) => ({ name: k.name, color: k.color }));
-    return [...cats, ...([...used].some((c) => !catOf(c)) ? [{ name: "без категорії", color: LOOSE }] : [])];
+    return [...cats, ...[...used].filter((c) => !catOf(c)).map((c) => ({ name: name(c), color: tint(c) }))];
   };
   const label = (x: { n: number; card: { pseudonym: string } }) => `${pad(x.n)} ${x.card.pseudonym}`;
   const toolName = GROUPS.flatMap((g) => g.tools).find((t) => t.id === tool)!.name;
@@ -213,7 +220,7 @@ export default function Analysis(props: {
           let top = 24 + H1;
           const unit = (H1 - 18) / maxNew;
           return <g key={c.iv}>
-            {c.fresh.map((code) => { top -= unit; return <rect key={code} x={x(i) - 13} y={top} width={26} height={unit - 1} fill={catOf(code)?.color ?? LOOSE}><title>{name(code)}</title></rect>; })}
+            {c.fresh.map((code) => { top -= unit; return <rect key={code} x={x(i) - 13} y={top} width={26} height={unit - 1} fill={tint(code)}><title>{name(code)}</title></rect>; })}
             <text x={x(i)} y={top - 4} fontSize={11} textAnchor="middle" fill={INK}>{c.fresh.length}</text>
           </g>;
         })}
@@ -222,7 +229,7 @@ export default function Analysis(props: {
         <polyline points={curve.map((c, i) => `${x(i)},${y2(c.total)}`).join(" ")} fill="none" stroke={INK} strokeWidth={1.5} />
         {curve.map((c, i) => <g key={c.iv}><circle cx={x(i)} cy={y2(c.total)} r={3} fill={INK} /><text x={x(i)} y={y2(c.total) - 8} fontSize={11} textAnchor="middle" fill={INK}>{c.total}</text></g>)}
         <line x1={L - 6} x2={W - 10} y1={24 + H1 + GAP + H2} y2={24 + H1 + GAP + H2} stroke={LINE} />
-        {[...s.cats.filter((k) => curve.some((c) => c.fresh.some((f) => catOf(f)?.id === k.id))), ...(curve.some((c) => c.fresh.some((f) => !catOf(f))) ? [{ id: "-", name: "без категорії", color: LOOSE }] : [])].map((k, i) => (
+        {[...s.cats.filter((k) => curve.some((c) => c.fresh.some((f) => catOf(f)?.id === k.id))), ...[...new Set(curve.flatMap((c) => c.fresh.filter((f) => !catOf(f))))].map((f) => ({ id: f, name: name(f), color: tint(f) }))].map((k, i) => (
           <g key={k.id}><rect x={L + i * 130} y={H - 17} width={9} height={9} fill={k.color} /><text x={L + i * 130 + 13} y={H - 9} fontSize={11} fill={MUTED}>{k.name.length > 18 ? k.name.slice(0, 17) + "…" : k.name}</text></g>
         ))}
         {order.map((v, i) => <text key={v.id} x={x(i)} y={H - 28} fontSize={11} textAnchor="middle" fill={MUTED}>{pad(v.n)}</text>)}
@@ -265,7 +272,7 @@ export default function Analysis(props: {
           const p = pos.get(c.id)!, r = 4 + 12 * Math.sqrt((size.get(c.id) ?? 0) / maxN), right = Math.cos(p.a) >= 0;
           const lx = C.x + (R + r + 8) * Math.cos(p.a), ly = C.y + (R + r + 8) * Math.sin(p.a);
           return <g key={c.id}>
-            <circle cx={p.x} cy={p.y} r={r} fill={catOf(c.id)?.color ?? LOOSE} stroke="#fff" strokeWidth={1.5} />
+            <circle cx={p.x} cy={p.y} r={r} fill={tint(c.id)} stroke="#fff" strokeWidth={1.5} />
             <text x={lx} y={ly + 4} fontSize={11} textAnchor={Math.abs(Math.cos(p.a)) < 0.2 ? "middle" : right ? "start" : "end"} fill={INK}>{c.name.length > 24 ? c.name.slice(0, 23) + "…" : c.name} ({size.get(c.id)})</text>
           </g>;
         })}
@@ -307,7 +314,7 @@ export default function Analysis(props: {
                 {q.h > 16 && <text x={q.x + 4} y={q.y + 13} fontSize={11} fontWeight={600} fill={INK}>{fit(k.name, q.w - 8)}</text>}
                 {slice(inset(q, q.h > 34 ? 18 : 2), k.codes.map((c) => weight(c.id))).map((z, m) => (
                   <g key={k.codes[m].id}>
-                    <rect x={z.x + 1} y={z.y + 1} width={Math.max(0, z.w - 2)} height={Math.max(0, z.h - 2)} fill={k.color} fillOpacity={0.35} />
+                    <rect x={z.x + 1} y={z.y + 1} width={Math.max(0, z.w - 2)} height={Math.max(0, z.h - 2)} fill={k.id === "--" ? k.codes[m].color : k.color} fillOpacity={0.35} />
                     {z.h > 15 && z.w > 30 && <text x={z.x + 4} y={z.y + 13} fontSize={11} fill={INK}>{fit(`${k.codes[m].name} ${weight(k.codes[m].id)}`, z.w - 8)}</text>}
                   </g>
                 ))}
@@ -321,49 +328,50 @@ export default function Analysis(props: {
   }
   if (tool === "strip") {
     const frags = fragments(apps);
-    const len = (iv: string) => {
-      const reps = props.priv.originals[iv] ?? [];
-      const sec = Math.max(0, ...reps.map((r) => seconds(r.t) ?? 0));
-      return sec > 0 ? { sec: true, total: sec + 30 } : { sec: false, total: Math.max(1, reps.length) };
-    };
+    // Replica times: own timecodes, or between timed neighbours (a split replica has none).
+    const timesOf = (iv: string) => replicaTimes((props.priv.originals[iv] ?? []).map((r) => seconds(r.t)));
     // Within a replica, the fragment's place in its text moves it towards the next replica's time.
-    const where = (iv: string, rep: number, at: number) => {
-      const l = len(iv), reps = props.priv.originals[iv] ?? [], r = reps[rep];
+    const where = (tm: ReturnType<typeof timesOf>, iv: string, rep: number, at: number) => {
+      const r = props.priv.originals[iv]?.[rep];
       const k = r?.text.length ? Math.min(1, at / r.text.length) : 0;
-      if (!l.sec) return (rep + k) / l.total;
-      const t0 = seconds(r?.t ?? null) ?? 0, t1 = seconds(reps[rep + 1]?.t ?? null) ?? t0 + 30;
-      return (t0 + k * Math.max(0, t1 - t0)) / l.total;
+      const t0 = tm.at[rep] ?? 0, t1 = tm.at[rep + 1] ?? t0 + (tm.timed ? 30 : 1);
+      return (t0 + k * Math.max(0, t1 - t0)) / tm.total;
     };
-    const longest = Math.max(1, ...order.map((v) => len(v.id).total));
-    const LW = 150, SW = 600, RH = 46, W = LW + SW + 20;
-    const usedCodes = [...new Set(list0().map(({ f }) => f.code))];
+    const LW = 150, SW = 600, LANE = 14, W = LW + SW + 20;
+    const list = frags.map((f, i) => ({ f, i })).filter(({ f }) => order.some((v) => v.id === f.iv));
+    const usedCodes = [...new Set(list.map(({ f }) => f.code))];
     const items = stripBy === "code" ? groups.flatMap((g) => g.codes).filter((c) => usedCodes.includes(c.id)).map((c) => ({ name: c.name, color: c.color })) : legendOf(usedCodes);
-    const H = 20 + order.length * RH + 14 + legendRows(items, SW) * 16;
-    const colorOf = (code: string) => (stripBy === "code" ? s.codes.find((c) => c.id === code)?.color : catOf(code)?.color) ?? LOOSE;
-    function list0() { return frags.map((f, i) => ({ f, i })).filter(({ f }) => order.some((v) => v.id === f.iv)); }
-    const list = list0();
+    const colorOf = (code: string) => (stripBy === "code" ? s.codes.find((c) => c.id === code)?.color ?? LOOSE : tint(code));
+    const longest = Math.max(1, ...order.map((v) => timesOf(v.id).total));
+    // Each interview: its marks by place, overlapping ones in lanes below the line; the row grows with its lanes.
+    let top = 20;
+    const rows = order.map((v) => {
+      const tm = timesOf(v.id), w = (tm.total / longest) * SW;
+      const marks = list.filter(({ f }) => f.iv === v.id).map(({ f, i }) => ({ f, i, x: LW + where(tm, v.id, f.rep, f.s) * w })).sort((p, q) => p.x - q.x);
+      const ln = lanes(marks.map((m) => m.x), 7);
+      const h = Math.max(46, 24 + (Math.max(0, ...ln) + 1) * LANE);
+      const row = { v, w, y: top + 16, marks: marks.map((m, n) => ({ ...m, lane: ln[n] })) };
+      top += h;
+      return row;
+    });
+    const H = top + 14 + legendRows(items, SW) * 16;
     const pickedF = picked !== null ? frags[picked] : null;
     body = (
       <div className="stack" style={{ gap: 12 }}>
         <svg xmlns="http://www.w3.org/2000/svg" width={W} height={H} viewBox={`0 0 ${W} ${H}`} fontFamily={FONT} role="img" aria-label={toolName}>
           <rect width={W} height={H} fill="#fff" />
-          <Legend items={items} x={LW} y={20 + order.length * RH + 14} width={SW} />
-          {order.map((v, k) => {
-            const y = 20 + k * RH + RH / 2, w = (len(v.id).total / longest) * SW;
-            return <g key={v.id}>
+          <Legend items={items} x={LW} y={top + 14} width={SW} />
+          {rows.map(({ v, w, y, marks }) => (
+            <g key={v.id}>
               <text x={0} y={y + 4} fontSize={12} fill={INK}>{label(v)}</text>
               <line x1={LW} x2={LW + w} y1={y} y2={y} stroke={LINE} strokeWidth={2} />
-              {list.filter(({ f }) => f.iv === v.id).map(({ f, i }) => ({ f, i, x: LW + where(v.id, f.rep, f.s) * w })).sort((a, b) => a.x - b.x).map(({ f, i, x }, n, all) => {
-                // Marks that would cover each other step up and down, so each stays clickable.
-                let lvl = 0;
-                for (let m = n - 1; m >= 0 && x - all[m].x < 6; m--) lvl++;
-                const dy = lvl === 0 ? 0 : (lvl % 2 ? -1 : 1) * Math.ceil(lvl / 2) * 13;
-                return <rect key={i} x={x - 3} y={y - 6 + dy} width={6} height={12} fill={colorOf(f.code)} stroke={picked === i ? INK : "none"} strokeWidth={2}
+              {marks.map(({ f, i, x, lane }) => (
+                <rect key={i} x={x - 3} y={y - 6 + lane * LANE} width={6} height={12} fill={colorOf(f.code)} stroke={picked === i ? INK : "none"} strokeWidth={2}
                   tabIndex={0} role="button" aria-label={`${name(f.code)}, інтерв'ю ${pad(v.n)}`} style={{ cursor: "pointer" }}
-                  onClick={() => setPicked(i)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setPicked(i); }} />;
-              })}
-            </g>;
-          })}
+                  onClick={() => setPicked(i)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setPicked(i); }} />
+              ))}
+            </g>
+          ))}
         </svg>
         {pickedF && (() => {
           const v = s.interviews.find((x) => x.id === pickedF.iv)!;
@@ -379,7 +387,7 @@ export default function Analysis(props: {
         })()}
       </div>
     );
-    note = <>Лінія — інтерв'ю на часі запису (без таймкодів — за порядком реплік); позначка — фрагмент, колір — {stripBy === "code" ? "код" : "категорія"}. Натисніть позначку, щоб побачити цитату.</>;
+    note = <>Лінія — інтерв'ю на часі запису (без таймкодів — за порядком реплік); позначка — фрагмент, колір — {stripBy === "code" ? "код" : "категорія (код без категорії — своїм кольором)"}. Позначки, що збігаються в часі, стають рядками нижче лінії. Репліка без таймкоду (напр., друга частина розділеної) стоїть між сусідніми за часом. Натисніть позначку, щоб побачити цитату.</>;
   }
   if (tool === "kwic") {
     const hits = q.trim() ? order.flatMap((v) => (props.priv.originals[v.id] ?? []).flatMap((r, rep) =>

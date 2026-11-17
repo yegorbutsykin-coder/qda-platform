@@ -5,7 +5,7 @@ import { fragments, type Frag } from "./figures";
 export type Method = "ІФА" | "Дескр." | "РТА";
 /** One section as the journal wants it; empty fields take the method's default. */
 export type SectionConf = { key: string; name?: string; hint?: string; limit?: number };
-export type Journal = { name: string; lang: "uk" | "en"; total?: number; other: string; sections?: SectionConf[]; floatsAtEnd?: boolean };
+export type Journal = { name: string; lang: "uk" | "en"; total?: number; other: string; sections?: SectionConf[]; floatsAtEnd?: boolean; runningHead?: string };
 /** A figure from the visual analysis, as it was when put in: the picture and what reproduces it. */
 export type FigFloat = {
   kind: "fig"; title: string; note: string; svg: string; w: number; h: number; landscape: boolean; bw: boolean;
@@ -24,6 +24,8 @@ export type RefOrder = "cyr" | "one";
 export type Article = {
   title: string; format?: Method; texts: Record<string, string>; journal?: Journal; floats?: Record<string, Float>;
   refs?: Ref[]; refOrder?: RefOrder;
+  /** The title page and the line under the abstract. */
+  authors?: string; affiliation?: string; keywords?: string;
 };
 export const SECTIONS = ["abstract", "intro", "method", "results", "discussion"] as const;
 export type SectionKey = (typeof SECTIONS)[number];
@@ -238,7 +240,11 @@ export function tableCells(t: TabFloat, en: boolean, mid: string): { head: strin
 }
 
 export type Block =
+  | { k: "front"; title: string; authors: string; affiliation: string }
   | { k: "title"; text: string; brk: boolean }
+  | { k: "h2"; text: string }
+  | { k: "h3"; text: string }
+  | { k: "kw"; label: string; text: string }
   | { k: "h1"; text: string; brk?: boolean }
   | { k: "ref"; text: string }
   | { k: "p"; text: string; indent: boolean }
@@ -247,30 +253,31 @@ export type Block =
   | { k: "tab"; label: string; t: TabFloat; brk: boolean; head: string[]; rows: { cells: string[]; group: boolean }[] };
 
 /**
- * The article as APA 7 lays it out: title and abstract on the first page; the text from a new page under the title
- * again, without an «Вступ» heading (unless the journal named it); other sections — centred bold headings; paragraphs
- * indented, the abstract not; "> " lines — block quotes. Figures and tables where they stand, or — if the journal
- * wants them at the end — tables, then figures, each from a new page.
+ * The article as APA 7 lays it out: a title page (title, authors, affiliation); the abstract with keywords on a
+ * page of its own; the text from a new page under the title again, without an «Вступ» heading (unless the journal
+ * named it); other sections — level 1 headings; "## " / "### " lines — level 2 / 3 headings; paragraphs indented,
+ * the abstract not; "> " lines — block quotes. References from a new page. Figures and tables where they stand,
+ * or — if the journal wants them at the end — after the references: tables, then figures, each from a new page.
  */
 export function exportBlocks(a: Article, method: Method, mid: string): Block[] {
   const secs = sectionsOf(a, method), keys = secs.map((x) => x.key), en = a.journal?.lang === "en", nums = numbers(a, keys);
   const atEnd = !!a.journal?.floatsAtEnd;
   const title = a.title.trim() || (en ? "Untitled" : "Без назви");
-  const out: Block[] = [{ k: "title", text: title, brk: false }], tabs: Block[] = [], figs: Block[] = [];
+  const out: Block[] = [{ k: "front", title, authors: a.authors?.trim() ?? "", affiliation: a.affiliation?.trim() ?? "" }], tabs: Block[] = [], figs: Block[] = [];
   let body = false;
   for (const sec of secs) {
     const ps = split(a.texts[sec.key] ?? "");
     if (!ps.some((p) => ("id" in p ? a.floats?.[p.id] : p.text.trim()))) continue;
     const abstract = sec.key === "abstract";
-    if (!abstract && !body) {
-      body = true;
-      if (out.length > 1) out.push({ k: "title", text: title, brk: true });
-    }
-    if (!(sec.key === "intro" && !a.journal?.sections?.find((c) => c.key === "intro")?.name?.trim())) out.push({ k: "h1", text: sec.name });
+    if (!abstract && !body) { body = true; out.push({ k: "title", text: title, brk: true }); }
+    if (abstract) out.push({ k: "h1", text: sec.name, brk: true });
+    else if (!(sec.key === "intro" && !a.journal?.sections?.find((c) => c.key === "intro")?.name?.trim())) out.push({ k: "h1", text: sec.name });
     for (const p of ps) {
       if ("text" in p) {
         for (const line of p.text.split(/\n+/).map((x) => x.trim()).filter(Boolean)) {
-          out.push(line.startsWith(">") ? { k: "quote", text: line.replace(/^>\s*/, "") } : { k: "p", text: line, indent: !abstract });
+          const h = /^(#{2,3})\s+(.+)$/.exec(line);
+          out.push(h && !abstract ? { k: h[1].length === 2 ? "h2" : "h3", text: h[2].trim() }
+            : line.startsWith(">") ? { k: "quote", text: line.replace(/^>\s*/, "") } : { k: "p", text: line, indent: !abstract });
         }
         continue;
       }
@@ -282,6 +289,7 @@ export function exportBlocks(a: Article, method: Method, mid: string): Block[] {
         : { k: "tab", label: `${en ? "Table" : "Таблиця"} ${n}`, t: f, brk: atEnd, ...tableCells(f, en, mid) };
       (atEnd ? (f.kind === "fig" ? figs : tabs) : out).push(b);
     }
+    if (abstract && a.keywords?.trim()) out.push({ k: "kw", label: en ? "Keywords:" : "Ключові слова:", text: a.keywords.trim() });
   }
   // APA: references after the text, from a new page; then tables, then figures.
   const refs = (a.refs ?? []).filter((r) => r.text.trim());

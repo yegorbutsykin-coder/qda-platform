@@ -38,6 +38,8 @@ export function forPrint(svg: SVGSVGElement): SVGSVGElement {
   };
   out.querySelectorAll<SVGElement>("[fill], [stroke]").forEach((el) => {
     const f = el.getAttribute("fill"), st = el.getAttribute("stroke");
+    // Heat-map cells: the strength is the message — grey of the same opacity, not a pattern.
+    if (el.hasAttribute("data-shade")) { el.setAttribute("fill", "#1E1E1C"); return; }
     if (st && !grey(st)) el.setAttribute("stroke", "#1E1E1C");
     if (!f || grey(f)) return;
     if (el.tagName === "text") { el.setAttribute("fill", "#1E1E1C"); return; }

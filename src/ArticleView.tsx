@@ -33,7 +33,18 @@ function PrintDoc(props: { blocks: Block[]; en: boolean }) {
   return (
     <div className="printdoc" aria-hidden="true">
       {props.blocks.map((b, i) => {
+        if (b.k === "front") return (
+          <div key={i} className="pfront">
+            <p className="ptitle">{b.title}</p>
+            {(b.authors || b.affiliation) && <p className="pline">&nbsp;</p>}
+            {b.authors && <p className="pline">{b.authors}</p>}
+            {b.affiliation && <p className="pline">{b.affiliation}</p>}
+          </div>
+        );
         if (b.k === "title") return <p key={i} className={"ptitle" + (b.brk ? " pbreak" : "")}>{b.text}</p>;
+        if (b.k === "h2") return <h2 key={i}>{b.text}</h2>;
+        if (b.k === "h3") return <h3 key={i}>{b.text}</h3>;
+        if (b.k === "kw") return <p key={i} className="pind"><i>{b.label}</i> {b.text}</p>;
         if (b.k === "h1") return <h1 key={i} className={b.brk ? "pbreak" : ""}>{b.text}</h1>;
         if (b.k === "ref") return <p key={i} className="pref"><Rich text={b.text} /></p>;
         if (b.k === "p") return <p key={i} className={b.indent ? "pind" : ""}>{b.text}</p>;
@@ -464,6 +475,8 @@ export default function ArticleView(props: {
               })}
               <button className="link" style={{ alignSelf: "flex-start", fontSize: 13 }} onClick={() => setConf([...conf, { key: `c${newId().slice(0, 8)}`, name: "" }])}>+ Розділ</button>
             </div>
+            <label className="stack" style={{ gap: 4, fontSize: 13 }}>Колонтитул — скорочена назва до 50 знаків (у професійних статтях APA; студентським роботам не потрібен). У Word — великими літерами зліва вгорі, номер сторінки справа.
+              <input className="input" maxLength={50} value={j.runningHead ?? ""} onChange={(e) => setJ({ runningHead: e.target.value })} placeholder="НЕВИЗНАЧЕНА ВТРАТА В ДИТИНСТВІ" style={{ textTransform: "uppercase" }} /></label>
             <label className="check" style={{ fontSize: 13 }}><input type="checkbox" checked={!!j.floatsAtEnd} onChange={(e) => setJ({ floatsAtEnd: e.target.checked })} />
               <span>Таблиці й рисунки — в кінці статті, кожен(на) з нової сторінки (інакше — у тексті, де вони стоять). Діє в експорті у Word.</span></label>
             <label className="stack" style={{ gap: 4, fontSize: 13 }}>Інші вимоги журналу — видно над статтею, коли панель закрита
@@ -489,6 +502,13 @@ export default function ArticleView(props: {
         {props.readOnly && <div className="warnline" style={{ borderStyle: "solid" }}>Статтю пише власник(ця) проєкту.{props.supervisor ? " Виділіть речення й натисніть «+ Зауваження» під розділом." : ""}</div>}
         <input className="input arttitle" value={draft.title} readOnly={props.readOnly} placeholder="Назва статті" aria-label="Назва статті"
           onChange={(e) => edit({ ...draft, title: e.target.value })} />
+        <div className="row" style={{ gap: 12 }}>
+          <label className="stack grow" style={{ gap: 4, fontSize: 13 }}>Автори(ки) — для титульної сторінки
+            <input className="input" value={draft.authors ?? ""} readOnly={props.readOnly} placeholder="Ольга Бойко, Єгор Буцикін" onChange={(e) => edit({ ...draft, authors: e.target.value })} /></label>
+          <label className="stack grow" style={{ gap: 4, fontSize: 13 }}>Афіліація
+            <input className="input" value={draft.affiliation ?? ""} readOnly={props.readOnly} placeholder="Київська школа економіки" onChange={(e) => edit({ ...draft, affiliation: e.target.value })} /></label>
+        </div>
+        <span className="small">Підзаголовки всередині розділу (напр., назви тем): рядок «## Назва» — рівень 2, «### Назва» — рівень 3. Рядок з «{">"} » — довга цитата блоком.</span>
 
         {secs.map(({ key: k, ...d }) => {
           const text = draft.texts[k] ?? "";
@@ -507,6 +527,10 @@ export default function ArticleView(props: {
                   onSelect={(e) => { const t = e.currentTarget; selection.current[k] = t.value.slice(t.selectionStart, t.selectionEnd).trim(); caret.current = { sec: k, seg: i / 2, pos: t.selectionEnd }; }}
                   onChange={(e) => { const n = [...ps]; n[i] = { text: e.target.value }; edit({ ...draft, texts: { ...draft.texts, [k]: join(n) } }); }} />
               ) : draft.floats?.[p.id] ? <Fragment key={p.id}>{FloatView({ id: p.id, f: draft.floats[p.id] })}</Fragment> : null))}
+              {k === "abstract" && (
+                <label className="stack" style={{ gap: 4, fontSize: 13 }}>{en ? "Keywords" : "Ключові слова"} — під анотацією, через кому
+                  <input className="input" value={draft.keywords ?? ""} readOnly={props.readOnly} placeholder="невизначена втрата, горе, феноменологія" onChange={(e) => edit({ ...draft, keywords: e.target.value })} /></label>
+              )}
 
               {remarksOf(k).map(([key, n]) => (
                 <div key={key} className="artremark">

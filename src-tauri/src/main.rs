@@ -616,10 +616,10 @@ async fn save_figure_docx(path: String, png: String, width_emu: u64, height_emu:
 
 /// The article as a Word file by APA 7; figures come as PNG (base64), referenced by index from the blocks.
 #[tauri::command]
-async fn save_article_docx(path: String, blocks: Vec<textfile::Block>, images: Vec<String>) -> Res<()> {
+async fn save_article_docx(path: String, blocks: Vec<textfile::Block>, images: Vec<String>, lang: String, running_head: String) -> Res<()> {
     use base64::Engine;
     let images = images.iter().map(|b| base64::engine::general_purpose::STANDARD.decode(b).map_err(|_| "bad_input".to_string())).collect::<Result<Vec<_>, _>>()?;
-    textfile::write_article_docx(std::path::Path::new(&path), &blocks, &images)
+    textfile::write_article_docx(std::path::Path::new(&path), &blocks, &images, &lang, &running_head)
 }
 
 /// A figure from the visual analysis: SVG text or PNG bytes (base64), to a file the person chose.

@@ -89,14 +89,16 @@ describe("export layout by APA 7", () => {
   const tab = { kind: "tab", variant: "themes", title: "Т", note: "", showPeople: true, showQuote: false, cols: ["Марта", "Ліна"], n: 2, names: {}, picks: {}, sig: "",
     rows: [{ sup: "С", id: "k1", name: "Втрата", people: ["Марта"], cells: [1, 0] }, { id: "k2", name: "Час", people: ["Марта", "Ліна"], cells: [1, 1] }] } as Float;
   const a: Article = { title: "Назва", texts: { abstract: "Коротко.", intro: "Абзац один.\nАбзац два.\n⟦fig:f⟧\n> Довга цитата.", results: "\n⟦tab:t⟧\nТекст." }, floats: { f: fig, t: tab } };
-  it("title and abstract first; the text from a new page under the title, without «Вступ»", () => {
-    const b = exportBlocks(a, "РТА", "Тема");
-    expect(b.slice(0, 7).map((x) => x.k + ("text" in x ? ":" + x.text : ""))).toEqual(["title:Назва", "h1:Анотація", "p:Коротко.", "title:Назва", "p:Абзац один.", "p:Абзац два.", "fig"]);
+  it("title page; abstract with keywords on its own page; the text from a new page under the title, without «Вступ»", () => {
+    const b = exportBlocks({ ...a, authors: "Ольга Бойко", keywords: "втрата, горе" }, "РТА", "Тема");
+    expect(b[0]).toEqual({ k: "front", title: "Назва", authors: "Ольга Бойко", affiliation: "" });
+    expect(b.slice(1, 8).map((x) => x.k + ("text" in x ? ":" + x.text : ""))).toEqual(["h1:Анотація", "p:Коротко.", "kw:втрата, горе", "title:Назва", "p:Абзац один.", "p:Абзац два.", "fig"]);
+    expect(b[1]).toMatchObject({ brk: true });
     expect(b[2]).toMatchObject({ indent: false });
-    expect(b[3]).toMatchObject({ brk: true });
-    expect(b[7]).toEqual({ k: "quote", text: "Довга цитата." });
-    expect(b[8]).toEqual({ k: "h1", text: "Теми" });
-    const t = b[9] as Extract<Block, { k: "tab" }>;
+    expect(b[4]).toMatchObject({ brk: true });
+    expect(b[8]).toEqual({ k: "quote", text: "Довга цитата." });
+    expect(b[9]).toEqual({ k: "h1", text: "Теми" });
+    const t = b[10] as Extract<Block, { k: "tab" }>;
     expect(t.label).toBe("Таблиця 1");
     expect(t.rows).toEqual([{ cells: ["С"], group: true }, { cells: ["Втрата", "Марта (1 з 2)"], group: false }, { cells: ["Інші теми"], group: true }, { cells: ["Час", "Марта, Ліна (2 з 2)"], group: false }]);
   });
@@ -105,6 +107,13 @@ describe("export layout by APA 7", () => {
     expect(b.slice(-2).map((x) => ("label" in x ? x.label : x.k))).toEqual(["Table 1", "Figure 1"]);
     expect(b.slice(-2).every((x) => "brk" in x && x.brk)).toBe(true);
     expect(b.filter((x) => x.k === "h1").map((x) => (x as { text: string }).text)).toEqual(["Abstract", "Themes"]);
+  });
+});
+
+describe("subheadings", () => {
+  it("«## » and «### » lines are level 2 and 3 headings", () => {
+    const b = exportBlocks({ title: "Т", texts: { results: "## Тема 1: Очікування\nАбзац.\n### Підтема\nЩе." } }, "РТА", "Тема");
+    expect(b.slice(3).map((x) => x.k + ":" + ("text" in x ? x.text : ""))).toEqual(["h2:Тема 1: Очікування", "p:Абзац.", "h3:Підтема", "p:Ще."]);
   });
 });
 

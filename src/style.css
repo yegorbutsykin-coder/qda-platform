@@ -378,6 +378,10 @@ textarea.arttext { width: 100%; resize: none; overflow: hidden; font-size: 14px;
   .printdoc blockquote { padding-left: 0.5in; }
   .printdoc .pbreak { break-before: page; }
   .printdoc .pref { padding-left: 0.5in; text-indent: -0.5in; }
+  .printdoc .pfront { padding-top: 6em; text-align: center; }
+  .printdoc .pline { text-align: center; }
+  .printdoc h2, .printdoc h3 { font-size: 12pt; font-weight: 700; margin: 0; break-after: avoid; }
+  .printdoc h3 { font-style: italic; }
   .printdoc .pfloat { break-inside: avoid; }
   .printdoc .pfloat img { max-width: 100%; display: block; }
   .printdoc .apatable { font-size: 12pt; line-height: 1.3; }

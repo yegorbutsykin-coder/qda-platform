@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agreement, apaNote, apaTitle, byPerson, codesByCategory, cooccurrence, fragments, groupBy, matrix, saturationCurve, saturationWords, shareWithCode, slice } from "./figures";
+import { agreement, apaNote, apaTitle, byPerson, codesByCategory, cooccurrence, fragments, groupBy, matrix, saturationCurve, saturationWords, lanes, replicaTimes, shareWithCode, slice } from "./figures";
 import type { App, Code } from "./coding";
 
 const A = (id: string, code: string, iv: string, s: number, e: number, by = "p1", rep = 0): App => ({ id, code, iv, rep, s, e, by, at: 0 });
@@ -68,5 +68,17 @@ describe("groups by characteristics", () => {
   it("share of people, not fragments", () => {
     const apps = [A("1", "c", "i1", 0, 1), A("2", "c", "i1", 2, 3), A("3", "c", "i1", 4, 5), A("4", "c", "i2", 0, 1)];
     expect(shareWithCode(apps, "c", ["i1", "i3"])).toBe(0.5);
+  });
+});
+
+describe("interview strip", () => {
+  it("a replica without a timecode sits between its neighbours, not at zero", () => {
+    expect(replicaTimes([0, 60, null, 120])).toEqual({ at: [0, 60, 90, 120], total: 150, timed: true });
+    expect(replicaTimes([null, 40, null, null]).at).toEqual([0, 40, 70, 100]);
+    expect(replicaTimes([10, 5, 20]).at).toEqual([10, 10, 20]); // never back in time
+    expect(replicaTimes([null, null])).toEqual({ at: [0, 1], total: 2, timed: false });
+  });
+  it("overlapping marks go to new lanes; the next free lane is reused", () => {
+    expect(lanes([0, 2, 4, 10, 11, 30], 7)).toEqual([0, 1, 2, 0, 1, 0]);
   });
 });

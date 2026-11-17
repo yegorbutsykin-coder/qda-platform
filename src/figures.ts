@@ -213,3 +213,32 @@ export function shareWithCode(apps: App[], code: string, ids: string[]): number 
   const has = new Set(apps.filter((a) => a.code === code).map((a) => a.iv));
   return ids.length ? ids.filter((id) => has.has(id)).length / ids.length : 0;
 }
+
+/**
+ * Times of replicas on the interview strip, in seconds. A replica without a timecode (e.g. the second half of a
+ * split one) sits between its timed neighbours; times never go back. Without any timecodes — replica numbers.
+ */
+export function replicaTimes(times: (number | null)[]): { at: number[]; total: number; timed: boolean } {
+  const known = times.map((t, i) => (t === null ? null : { i, t })).filter((x): x is { i: number; t: number } => !!x);
+  if (!known.length) return { at: times.map((_, i) => i), total: Math.max(1, times.length), timed: false };
+  const at: number[] = [];
+  times.forEach((t, i) => {
+    let v = t;
+    if (v === null) {
+      const p = [...known].reverse().find((k) => k.i < i), q = known.find((k) => k.i > i);
+      v = p && q ? p.t + ((q.t - p.t) * (i - p.i)) / (q.i - p.i) : p ? p.t + 30 * (i - p.i) : (q!.t * i) / q!.i;
+    }
+    at.push(Math.max(v, at[i - 1] ?? 0));
+  });
+  return { at, total: at[at.length - 1] + 30, timed: true };
+}
+
+/** Lanes for marks on a line: a mark goes to the first lane where it does not touch the previous one. */
+export function lanes(xs: number[], gap: number): number[] {
+  const ends: number[] = [];
+  return xs.map((x) => {
+    let l = ends.findIndex((e) => x - e >= gap);
+    if (l < 0) { l = ends.length; ends.push(x); } else ends[l] = x;
+    return l;
+  });
+}

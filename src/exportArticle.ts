@@ -26,7 +26,7 @@ export async function saveDocx(a: Article, method: Method, mid: string): Promise
     } else blocks.push(b);
   }
   const file = path.toLowerCase().endsWith(".docx") ? path : path + ".docx";
-  await invoke("save_article_docx", { path: file, blocks, images });
+  await invoke("save_article_docx", { path: file, blocks, images, lang: a.journal?.lang ?? "uk", runningHead: a.journal?.runningHead ?? "" });
   return file.split(/[\\/]/).pop()!;
 }
 

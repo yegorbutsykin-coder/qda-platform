@@ -6,6 +6,7 @@ import {
   sectionsOf, split, themeTable, totalLimit, type Article, type Block, type Caret, type FigFloat, type Float, type Journal, type Method, type SectionConf, type TabFloat,
 } from "./article";
 import { checkList } from "./apaCheck";
+import { audit, citeOf } from "./citations";
 import { LEVELS } from "./coding";
 import { saveDocx, saveFigures, wideTable } from "./exportArticle";
 import { initialsOf, newId, type Note, type Private, type Shared } from "./model";
@@ -99,7 +100,8 @@ export default function ArticleView(props: {
   const [out, setOut] = useState(""); // export status line
   const [refEdit, setRefEdit] = useState<string | null>(null);
   const [newRefs, setNewRefs] = useState("");
-  const [why, setWhy] = useState<Set<string>>(new Set()); // sources with their APA notes unfolded // "table id|category id" choosing a quote
+  const [why, setWhy] = useState<Set<string>>(new Set()); // sources with their APA notes unfolded
+  const [refMsg, setRefMsg] = useState(""); // "table id|category id" choosing a quote
   const [quotes, setQuotes] = useState(false);
   const [qcode, setQcode] = useState<string | null>(null);
   const [placed, setPlaced] = useState("");
@@ -221,6 +223,14 @@ export default function ArticleView(props: {
     const level = (id: string) => (issues.get(id)!.some((x) => x.level === "error") ? "error" : issues.get(id)!.length ? "warn" : "");
     const nErr = refs.filter((r) => level(r.id) === "error").length, nWarn = refs.filter((r) => level(r.id) === "warn").length;
     const toggle = (id: string) => setWhy((w) => { const n = new Set(w); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+    const au = audit(draft, secs);
+    const cite = (text: string) => {
+      if (!caret.current) { setRefMsg("Поставте курсор у тексті статті, куди вставити посилання, і натисніть ще раз."); return; }
+      const r = putText(latest.current, keys, caret.current, { text, block: false });
+      edit(r.article);
+      caret.current = r.caret;
+      setRefMsg(`Посилання ${text} вставлено в розділ «${nameOf(r.caret.sec)}».`);
+    };
     const groups = order === "cyr" && sorted && refs.some((r) => isCyrillic(r.text)) && refs.some((r) => !isCyrillic(r.text));
     return (
       <section id="sec-refs" className="artsec" aria-label={en ? "References" : "Список літератури"}>
@@ -247,6 +257,14 @@ export default function ArticleView(props: {
             <span className="small grow">Перевірка евристична: наведіть на джерело або натисніть «!», щоб побачити, що виправити; остаточно звіряйте з посібником APA.</span>
           </div>
         )}
+        {(au.missing.length > 0 || au.unused.size > 0) && (
+          <div className="warnline stack" style={{ gap: 4 }} role="status">
+            <b style={{ fontWeight: 600 }}>Звірка з текстом</b>
+            {au.missing.length > 0 && <span>У тексті є посилання, яких немає в списку: {au.missing.map((m) => `${m.shown} (розділ «${m.sec}»)`).join("; ")}.</span>}
+            {au.unused.size > 0 && <span>Джерел, на які немає посилань у тексті: {au.unused.size} — позначені «у тексті не згадано». APA вимагає, щоб кожне джерело списку було процитоване, і навпаки.</span>}
+          </div>
+        )}
+        {refMsg && <span className="small" role="status">{refMsg}</span>}
         <div className="stack" style={{ gap: 2 }}>
           {refs.map((r, i) => (
             <Fragment key={r.id}>
@@ -263,9 +281,20 @@ export default function ArticleView(props: {
                     <button className="refbang" aria-expanded={why.has(r.id)} onClick={() => toggle(r.id)}
                       aria-label={`Зауваження за APA 7: ${issues.get(r.id)!.length}`}>!</button>
                   )}
+                  {au.unused.has(r.id) && <span className="small" style={{ whiteSpace: "nowrap" }}>у тексті не згадано</span>}
                   {!ro && <button className="link" style={{ fontSize: 12 }} onClick={() => setRefEdit(r.id)} aria-label={`Редагувати: ${r.text.slice(0, 40)}`}>Редагувати</button>}
                   {!ro && <button className="link danger" style={{ fontSize: 12 }} onClick={() => dropRef(r.id)} aria-label={`Видалити: ${r.text.slice(0, 40)}`}>Видалити</button>}
                 </div>
+                {!ro && (() => {
+                  const c = citeOf(r.text);
+                  return c && (
+                    <div className="row refcite" style={{ gap: "2px 14px" }}>
+                      <span className="small">↳ Послатися в тексті:</span>
+                      <button className="link" onMouseDown={(e) => e.preventDefault()} onClick={() => cite(c.paren)} aria-label={`Вставити посилання ${c.paren}`}>{c.paren}</button>
+                      <button className="link" onMouseDown={(e) => e.preventDefault()} onClick={() => cite(c.narr)} aria-label={`Вставити посилання ${c.narr}`}>{c.narr}</button>
+                    </div>
+                  );
+                })()}
                 {why.has(r.id) && (
                   <ul className="refissues">
                     {issues.get(r.id)!.map((x, k) => <li key={k} className={x.level}><b>{x.level === "error" ? "Помилка" : "Варто перевірити"}:</b> {x.msg}</li>)}
@@ -282,7 +311,7 @@ export default function ArticleView(props: {
               placeholder={"Вставте одне чи кілька джерел — кожне з нового рядка.\nБоймер, Д. (2021). Невизначена втрата. *Журнал психології*, *12*(3), 45–60. https://doi.org/10.1234/abcd"} />
             <div className="row" style={{ gap: 10 }}>
               <button className="btn sm" disabled={!newRefs.trim()} onClick={() => { edit(addRefs(latest.current, newRefs, newId)); setNewRefs(""); }}>Додати до списку</button>
-              <span className="small">Курсив — між зірочками: *Назва журналу*, *12*(3). Посилання в тексті (Автор, рік) — на кроці 6.3, імпорт із Zotero — 6.4.</span>
+              <span className="small">Курсив — між зірочками: *Назва журналу*, *12*(3). Імпорт із Zotero — на кроці 6.4.</span>
             </div>
           </div>
         )}

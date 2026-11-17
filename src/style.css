@@ -341,7 +341,7 @@ textarea.edittext { resize: none; }
 .tabctl { font-family: var(--sans); font-size: 13px; }
 .refline { margin: 0; padding: 6px 0 6px 2.2em; text-indent: -2.2em; font-family: "Times New Roman", Times, serif; font-size: 16px; line-height: 1.6; }
 textarea.refline { padding: 8px 12px 8px calc(12px + 2.2em); min-height: 0; }
-.refrow { border-bottom: 1px solid var(--line3); }
+.refwrap { border-bottom: 1px solid var(--line3); }
 .refwrap { border-left: 3px solid transparent; padding-left: 8px; }
 .refwrap.referr, .refsum.referr { border-left-color: var(--bad); background: #FBEDEB; }
 .refwrap.refwarn, .refsum.refwarn { border-left-color: #B8860B; background: #FBF4E1; }
@@ -351,6 +351,8 @@ textarea.refline { padding: 8px 12px 8px calc(12px + 2.2em); min-height: 0; }
 .refwarn .refbang { color: #8A6508; }
 .refbang[aria-expanded="true"] { background: currentColor; }
 .referr .refbang[aria-expanded="true"], .refwarn .refbang[aria-expanded="true"] { color: #fff; background: var(--ink); }
+.refcite { font-size: 12px; padding: 0 0 6px 2.2em; }
+.refcite .link { font-family: "Times New Roman", Times, serif; font-size: 14px; }
 .refissues { margin: 0 0 8px; padding: 0 0 0 20px; font-size: 13px; line-height: 1.6; }
 .refissues .error b { color: var(--bad); }
 .refissues .warn b { color: #8A6508; }

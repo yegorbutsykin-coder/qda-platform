@@ -11,7 +11,7 @@ const INITIALS = /^(\p{Lu}\p{Ll}?\.(?:(?:\s|-)\p{Lu}\p{Ll}?\.)*)$/u;
 const CITIES = /\b(New York|London|Oxford|Cambridge|Thousand Oaks|Washington, DC|Kyiv|Київ|Харків|Львів|Одеса|Дніпро|Москва|Moscow)\s*:/;
 
 /** The authors' part, the date and what follows, or null when there is no date in brackets. */
-function parts(t: string) {
+export function parts(t: string) {
   const m = DATE.exec(t);
   if (!m) return null;
   return { authors: t.slice(0, m.index).trim(), date: m[1], after: t.slice(m.index + m[0].length) };

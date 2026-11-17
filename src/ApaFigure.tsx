@@ -77,13 +77,18 @@ function pageSize(svg: SVGSVGElement, landscape: boolean) {
   return { win: (sw * k) / 96, hin: (sh * k) / 96, minPt: smallest * 0.75 * k };
 }
 
-export default function ApaFigure(props: { svg: () => SVGSVGElement | null; tool: string; n: number; coders: number; refresh: string; onClose: () => void }) {
-  const [lang, setLang] = useState<Lang>("uk");
-  const [num, setNum] = useState(1);
-  const [title, setTitle] = useState(() => apaTitle(props.tool, props.n, "uk"));
-  const [note, setNote] = useState(() => apaNote(props.tool, props.n, props.coders, "uk"));
-  const [bw, setBw] = useState(false);
-  const [landscape, setLandscape] = useState(false);
+type Made = { title: string; note: string; svg: string; w: number; h: number; landscape: boolean; bw: boolean };
+
+export default function ApaFigure(props: {
+  svg: () => SVGSVGElement | null; tool: string; n: number; coders: number; refresh: string; onClose: () => void;
+  lang: Lang; init?: { title: string; note: string; bw: boolean; landscape: boolean }; replaceN?: number; toArticle?: (f: Made, replace: boolean) => void;
+}) {
+  const [lang, setLang] = useState<Lang>(props.lang);
+  const [num, setNum] = useState(props.replaceN ?? 1);
+  const [title, setTitle] = useState(() => props.init?.title ?? apaTitle(props.tool, props.n, props.lang));
+  const [note, setNote] = useState(() => props.init?.note ?? apaNote(props.tool, props.n, props.coders, props.lang));
+  const [bw, setBw] = useState(props.init?.bw ?? false);
+  const [landscape, setLandscape] = useState(props.init?.landscape ?? false);
   const [preview, setPreview] = useState("");
   const [size, setSize] = useState<{ win: number; hin: number; minPt: number } | null>(null);
   const [msg, setMsg] = useState("");
@@ -114,6 +119,12 @@ export default function ApaFigure(props: { svg: () => SVGSVGElement | null; tool
       });
       setMsg(`Збережено: ${path.split(/[\\/]/).pop()}. Відкрийте у Word і скопіюйте рисунок разом із підписами у статтю.`);
     } catch (e) { setMsg(`Не вдалося зберегти: ${e}`); }
+  }
+  function toArticle(replace: boolean) {
+    const s = final();
+    if (!s) return;
+    const z = pageSize(s, landscape);
+    props.toArticle!({ title: title.trim(), note: note.trim(), svg: new XMLSerializer().serializeToString(s), w: z.win, h: z.hin, landscape, bw }, replace);
   }
   async function toImage() {
     const s = final();
@@ -162,11 +173,13 @@ export default function ApaFigure(props: { svg: () => SVGSVGElement | null; tool
         {note.trim() && <p className="apanote"><i>{L.note}</i> {note.startsWith("N ") ? <><i>N</i>{note.slice(1)}</> : note}</p>}
       </div>
       <div className="row" style={{ gap: 10 }}>
-        <button className="btn primary" onClick={toWord}>Зберегти у Word (.docx)…</button>
+        {props.toArticle && props.replaceN !== undefined && <button className="btn primary" onClick={() => toArticle(true)}>↳ Замінити Рисунок {props.replaceN} у статті</button>}
+        {props.toArticle && <button className={"btn" + (props.replaceN === undefined ? " primary" : "")} onClick={() => toArticle(false)}>↳ Вставити в статтю{props.replaceN !== undefined ? " як новий" : " як рисунок"}</button>}
+        <button className={"btn" + (props.toArticle ? "" : " primary")} onClick={toWord}>Зберегти у Word (.docx)…</button>
         <button className="btn" onClick={toImage}>Рисунок окремим файлом (PNG 300 dpi / SVG)…</button>
       </div>
       {msg && <span className="small" role="status">{msg}</span>}
-      <span className="small">Розміщення за APA — у тексті після першої згадки або всі рисунки в кінці статті, як вимагає журнал. Вставляти рисунок просто в статтю програми можна буде на етапі 5.</span>
+      <span className="small">У статті рисунок стане туди, де востаннє стояв курсор (або в кінець розділу результатів); номер ставиться сам за порядком. Рисунок зберігає дані на момент вставлення. Розміщення в кінці статті — у «Вимогах журналу».</span>
     </div>
   );
 }

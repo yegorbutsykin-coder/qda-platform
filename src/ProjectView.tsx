@@ -8,7 +8,7 @@ import Share from "./Share";
 import Merge, { PackPicker } from "./Merge";
 import Analysis from "./Analysis";
 import ArticleView from "./ArticleView";
-import { asMethod, emptyArticle, sectionsOf } from "./article";
+import { asMethod, emptyArticle, numbers, putFloat, sectionsOf, type Caret, type FigFloat } from "./article";
 import { RemarksView, Remark, type RemarkPatch, type RemarkRow } from "./Remarks";
 import { updateCopy } from "./exchange";
 import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
@@ -138,6 +138,8 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const [back, setBack] = useState<{ view: typeof view; label: string } | null>(null);
   const [seenAnalysis, setSeenAnalysis] = useState(false);
   const [artFocus, setArtFocus] = useState<string | null>(null);
+  const artCaret = useRef<Caret | null>(null);
+  const [figPreset, setFigPreset] = useState<(FigFloat & { id: string; n: number; key: number }) | null>(null);
   useEffect(() => { if (view !== "main") setBack(null); if (view === "analysis") setSeenAnalysis(true); }, [view]); // whose coding is shown: "all" or a profile id (blind coding: just mine)
   const [toast, setToast] = useState<Toast>(null);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -185,6 +187,30 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
     const before = { s: shared, p: priv };
     commit(s, p);
     notify(text, () => { commit(before.s, before.p); setToast(null); });
+  }
+
+  /** A figure from the visual analysis goes into the article at the last caret, or replaces the one being updated. */
+  function figureToArticle(f: FigFloat, replace?: string) {
+    const s0 = latest.current.shared, a = s0.article ?? emptyArticle();
+    const secs = sectionsOf(a, asMethod(a.format ?? meta?.method ?? "")), keys = secs.map((x) => x.key);
+    let id = replace, text: string, next;
+    if (replace && a.floats?.[replace]) {
+      next = { ...a, floats: { ...a.floats, [replace]: f } };
+      text = `Рисунок ${numbers(a, keys).get(replace)} оновлено за поточним кодуванням.`;
+    } else {
+      id = newId();
+      const r = putFloat(a, keys, artCaret.current, id, f);
+      next = r.article;
+      text = `Рисунок ${numbers(next, keys).get(id)} вставлено в розділ «${secs.find((x) => x.key === r.sec)?.name}».`;
+    }
+    undoable(text, { ...s0, article: next }, latest.current.priv);
+    setFigPreset(null); setArtFocus(null); setTimeout(() => setArtFocus(`fl-${id}`)); setView("article");
+  }
+  function openFigure(id: string) {
+    const a = shared.article!, f = a.floats?.[id];
+    if (f?.kind !== "fig") return;
+    const n = numbers(a, sectionsOf(a, asMethod(a.format ?? meta?.method ?? "")).map((x) => x.key)).get(id) ?? 0;
+    setFigPreset({ ...f, id, n, key: Date.now() }); setView("analysis");
   }
 
   const iv = shared.interviews.find((x) => x.id === sel);
@@ -541,7 +567,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
             </div>
             <div className="grow" />
             <button className="btn sm" onClick={() => setView("article")}>Стаття</button>
-            {shared.apps.length > 0 && <button className="btn sm" onClick={() => setView("analysis")}>Візуальний аналіз</button>}
+            {shared.apps.length > 0 && <button className="btn sm" onClick={() => { setFigPreset(null); setView("analysis"); }}>Візуальний аналіз</button>}
             {remarkRows.length > 0 && <button className="btn sm" onClick={() => setView("remarks")}>Зауваження · {openRemarks}</button>}
             {copy ? (
               <>
@@ -733,12 +759,18 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
           suspects={allSuspects.map((x) => x.word)} onBack={() => setView("main")} toDict={() => setView("dict")} />
       )}
       {/* Kept open while away, so «← Назад» returns to the same tool and filters. */}
-      {seenAnalysis && meta && <div hidden={view !== "analysis"}><Analysis shared={shared} priv={priv} method={meta.method} me={me} onBack={() => setView("main")} goContext={goContext} setTones={(tones) => commit({ ...shared, tones }, priv)} /></div>}
+      {seenAnalysis && meta && <div hidden={view !== "analysis"}><Analysis shared={shared} priv={priv} method={meta.method} me={me} onBack={() => setView(figPreset ? "article" : "main")}
+        lang={shared.article?.journal?.lang ?? "uk"} preset={figPreset} toArticle={copy ? undefined : figureToArticle} goContext={goContext} setTones={(tones) => commit({ ...shared, tones }, priv)} /></div>}
       {view === "article" && meta && (
         <div className="stack" style={{ gap: 12 }}>
           <button className="link" style={{ fontSize: 12, alignSelf: "flex-start" }} onClick={() => setView("main")}>← До транскриптів</button>
           <ArticleView article={shared.article ?? emptyArticle()} method={meta.method} shared={shared} priv={priv} readOnly={!!copy} supervisor={copy?.kind === "supervisor"} me={me}
             notes={shared.notes} who={who} focus={artFocus} setRemark={setRemark}
+            caret={artCaret} openFigure={openFigure}
+            undoable={(text, before, next) => {
+              commit({ ...latest.current.shared, article: next }, latest.current.priv);
+              notify(text, () => { commit({ ...latest.current.shared, article: before }, latest.current.priv); setToast(null); });
+            }} toAnalysis={() => { setFigPreset(null); setView("analysis"); }}
             save={(article) => commit({ ...latest.current.shared, article }, latest.current.priv)}
             addRemark={(sec, text, q) => commit({ ...shared, notes: { ...shared.notes, [`art:${sec}:${newId()}`]: { text, by: me, at: Date.now(), status: "open", statusAt: Date.now(), ...(q ? { quote: q } : {}) } } }, priv)} />
         </div>

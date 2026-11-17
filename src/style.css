@@ -11,7 +11,8 @@
   --accent: #D4501C;
   --bad: #B3261E;
   --mono: "IBM Plex Mono", Menlo, Consolas, monospace;
-  font-family: Inter, -apple-system, "Segoe UI", sans-serif;
+  --sans: Inter, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--sans);
   color: var(--ink);
   background: var(--bg);
   font-size: 14px;
@@ -326,6 +327,19 @@ textarea.edittext { resize: none; }
 .artsec.on { border-left-color: var(--accent); }
 .arthint summary { font-size: 12px; color: var(--muted); cursor: pointer; }
 .arthint p { font-size: 13px; line-height: 1.6; color: var(--muted); margin: 6px 0 0; max-width: 760px; }
+.artfloat { display: flex; flex-direction: column; gap: 8px; scroll-margin-top: 16px; }
+.artfloat .apapage { padding: 20px 24px; font-size: 15px; line-height: 1.8; overflow-x: auto; }
+.apain { font: inherit; color: inherit; background: transparent; border: 0; border-bottom: 1px dashed var(--line3); padding: 0; width: 100%; resize: none; overflow: hidden; }
+.apain:focus { outline: none; border-bottom-color: var(--accent); }
+.apatable { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 14px; line-height: 1.5; }
+.apatable th, .apatable td { text-align: left; vertical-align: top; padding: 6px 10px 6px 0; }
+.apatable thead th { border-top: 1.5px solid #000; border-bottom: 1px solid #000; font-weight: 400; }
+.apatable tbody tr:last-child td { border-bottom: 1.5px solid #000; }
+.apatable .tsup td { font-weight: 700; padding-top: 10px; }
+.apatable .mid { text-align: center; }
+.qpick { gap: 6px; margin-top: 6px; padding: 8px; background: var(--panel); border: 1px solid var(--line2); font-family: var(--sans); font-size: 13px; }
+.tabctl { font-family: var(--sans); font-size: 13px; }
+textarea.arttext.more { min-height: 44px; }
 textarea.arttext { width: 100%; resize: none; overflow: hidden; font-size: 14px; line-height: 1.8; padding: 10px 12px; min-height: 90px; }
 .wcount { display: inline-flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); font-family: var(--mono); }
 .wcount.over { color: #B3261E; }

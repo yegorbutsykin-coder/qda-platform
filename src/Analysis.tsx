@@ -1,5 +1,6 @@
 // Stage 4: the visual analysis window. Figures are SVG drawn here, so they work offline and can be saved.
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { dataSig, type FigFloat } from "./article";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { agreement, byPerson, codesByCategory, cooccurrence, fragments, groupBy, matrix, saturationCurve, saturationWords, shareWithCode, slice, type Rect } from "./figures";
@@ -131,7 +132,10 @@ function ShareBars(props: { title: string; rows: { label: string; parts: number[
   );
 }
 
-export default function Analysis(props: { shared: Shared; priv: Private; method: string; me: string; onBack: () => void; goContext: (iv: string, rep: number) => void; setTones: (t: Record<string, Tone>) => void }) {
+export default function Analysis(props: {
+  shared: Shared; priv: Private; method: string; me: string; onBack: () => void; goContext: (iv: string, rep: number) => void; setTones: (t: Record<string, Tone>) => void;
+  lang: "uk" | "en"; preset: (FigFloat & { id: string; n: number; key: number }) | null; toArticle?: (f: FigFloat, replace?: string) => void;
+}) {
   const s = props.shared;
   const [tool, setTool] = useState<Tool>("matrix");
   const [ivs, setIvs] = useState<Set<string>>(() => new Set(s.interviews.map((x) => x.id)));
@@ -147,6 +151,14 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
   const [toneMax, setToneMax] = useState(40);
   const [charKey, setCharKey] = useState(() => s.fields.find((f) => f.type === "choice")?.id ?? "gender");
   const fig = useRef<HTMLDivElement>(null);
+  // «Оновити за поточним кодуванням» from the article: the same tool and filters, the figure panel open.
+  const pre = props.preset;
+  useEffect(() => {
+    if (!pre) return;
+    setTool(pre.tool as Tool); setIvs(new Set(pre.ivs.filter((id) => s.interviews.some((x) => x.id === id)))); setWhose(pre.whose);
+    if (pre.stripBy) setStripBy(pre.stripBy);
+    setApa(true);
+  }, [pre?.key]);
   const coders = [...new Set(s.apps.map((a) => a.by))];
   const order = s.interviews.filter((x) => ivs.has(x.id));
   const apps = useMemo(() => s.apps.filter((a) => ivs.has(a.iv) && (whose === "all" || a.by === whose)), [s.apps, ivs, whose]);
@@ -598,7 +610,9 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
           </div>
         )}
         {saved && <span className="small" role="status">{saved}</span>}
-        {apa && !noFigure && <ApaFigure key={tool} tool={tool} n={order.length} coders={whose === "all" || tool === "people" ? Math.max(1, coders.length) : 1}
+        {apa && !noFigure && <ApaFigure key={`${tool}|${pre?.key ?? ""}`} tool={tool} lang={props.lang}
+          init={pre && pre.tool === tool ? pre : undefined} replaceN={pre && pre.tool === tool ? pre.n : undefined}
+          toArticle={props.toArticle && ((f, replace) => props.toArticle!({ kind: "fig", ...f, tool, ivs: [...ivs], whose, ...(tool === "strip" ? { stripBy } : {}), sig: dataSig(s) }, replace ? pre?.id : undefined))} n={order.length} coders={whose === "all" || tool === "people" ? Math.max(1, coders.length) : 1}
           svg={() => fig.current?.querySelector("svg") ?? null} refresh={`${tool}|${stripBy}|${[...ivs].join()}|${whose}|${apps.length}|${s.codes.length}`} onClose={() => setApa(false)} />}
         <div className="afig" ref={fig}>{body ?? <span className="small">Немає закодованих фрагментів у вибраних інтерв'ю.</span>}</div>
         {note && <p className="small" style={{ lineHeight: 1.7, maxWidth: 760 }}>{note}</p>}

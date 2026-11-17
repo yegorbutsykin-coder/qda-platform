@@ -1,11 +1,20 @@
 // Stage 5: the «Стаття» tab — title, sections by method with hints, word counts, supervisor remarks, quotes from coding.
-import { useEffect, useRef, useState } from "react";
-import { countWords, formatQuote, insertAt, journalChanged, METHODS, resetJournal, sectionsOf, totalLimit, type Article, type Journal, type Method, type SectionConf } from "./article";
+import { Fragment, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import {
+  countWords, dataSig, dropFloat, formatQuote, fragKey, join, journalChanged, METHODS, moveFloat, numbers, putFloat, putText, resetJournal, resultsKey,
+  sectionsOf, split, themeTable, totalLimit, type Article, type Caret, type FigFloat, type Float, type Journal, type Method, type SectionConf, type TabFloat,
+} from "./article";
+import { LEVELS } from "./coding";
 import { initialsOf, newId, type Note, type Private, type Shared } from "./model";
 import { quote } from "./coding";
 import { codesByCategory, fragments, type Frag } from "./figures";
 import { applyDict } from "./text";
 import { Remark, type RemarkPatch } from "./Remarks";
+
+const svgUrl = (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+const tableTitle = (v: TabFloat["variant"], supers: boolean, en: boolean) => v === "presence"
+  ? (en ? "Presence of Themes Across Participants" : "Присутність тем в інтерв'ю учасників(ць)")
+  : en ? (supers ? "Superordinate Themes, Themes, and Illustrative Quotes" : "Themes and Illustrative Quotes") : (supers ? "Супертеми, теми та ілюстративні цитати" : "Теми та ілюстративні цитати");
 
 const grow = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } };
 
@@ -23,6 +32,8 @@ export default function ArticleView(props: {
   article: Article; method: string; shared: Shared; priv: Private; readOnly: boolean; supervisor: boolean; me: string;
   notes: Record<string, Note>; who: (by: string) => string; focus: string | null;
   save: (a: Article) => void; addRemark: (sec: string, text: string, quote: string) => void; setRemark: (key: string, p: RemarkPatch) => void;
+  caret: MutableRefObject<Caret | null>; openFigure: (id: string) => void; toAnalysis: () => void;
+  undoable: (text: string, before: Article, next: Article) => void;
 }) {
   const [draft, setDraft] = useState(props.article);
   const [active, setActive] = useState<string | null>(null);
@@ -30,7 +41,8 @@ export default function ArticleView(props: {
   const [writing, setWriting] = useState<string | null>(null); // section with an open remark form
   const [remark, setRemarkText] = useState("");
   const selection = useRef<Record<string, string>>({});
-  const caret = useRef<{ sec: string; pos: number } | null>(null); // where a quote goes
+  const caret = props.caret; // where a quote, figure or reference goes; outlives this view
+  const [picking, setPicking] = useState<string | null>(null); // "table id|category id" choosing a quote
   const [quotes, setQuotes] = useState(false);
   const [qcode, setQcode] = useState<string | null>(null);
   const [placed, setPlaced] = useState("");
@@ -44,6 +56,7 @@ export default function ArticleView(props: {
   const flush = () => { if (pending.current) { window.clearTimeout(timer.current); pending.current = false; props.save(latest.current); } };
   useEffect(() => flush, []);
   const edit = (a: Article) => {
+    latest.current = a; // quick clicks build on each other, not on the last render
     setDraft(a);
     pending.current = true;
     window.clearTimeout(timer.current);
@@ -52,7 +65,7 @@ export default function ArticleView(props: {
   // Text put in by a quote, undo or a package doesn't fire onInput — fit the boxes to it too.
   useEffect(() => document.querySelectorAll<HTMLTextAreaElement>("textarea.arttext").forEach(grow), [draft.texts]);
   useEffect(() => {
-    if (props.focus) document.getElementById(`sec-${props.focus}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+    if (props.focus) document.getElementById(props.focus.startsWith("fl-") ? props.focus : `sec-${props.focus}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [props.focus]);
 
   const secs = sectionsOf(draft, fmt);
@@ -71,18 +84,160 @@ export default function ArticleView(props: {
   const isVoice = (f: Frag) => props.priv.originals[f.iv]?.[f.rep]?.role !== "i";
   const frags = qcode ? fragments(props.shared.apps.filter((a) => a.code === qcode))
     .sort((a, b) => (ivOf(a.iv)?.n ?? 0) - (ivOf(b.iv)?.n ?? 0) || a.rep - b.rep || a.s - b.s) : [];
+  const keys = secs.map((x) => x.key), en = lang === "en";
+  const nameOf = (k: string) => secs.find((x) => x.key === k)?.name ?? "";
   const insertQuote = (f: Frag) => {
     const iv = ivOf(f.iv);
     if (!iv) return;
-    const c = caret.current;
-    const k = c && secs.some((x) => x.key === c.sec) ? c.sec : (secs.find((x) => x.key === "results") ?? secs[secs.length - 1]).key;
-    const cur = draft.texts[k] ?? "";
-    const r = insertAt(cur, c?.sec === k ? Math.min(c.pos, cur.length) : cur.length, formatQuote(fragText(f), iv.card.pseudonym, iv.n, lang));
-    edit({ ...draft, texts: { ...draft.texts, [k]: r.text } });
-    caret.current = { sec: k, pos: r.pos };
-    setActive(k);
-    setPlaced(`Цитату вставлено в розділ «${secs.find((x) => x.key === k)?.name}».`);
+    const r = putText(draft, keys, caret.current, formatQuote(fragText(f), iv.card.pseudonym, iv.n, lang));
+    edit(r.article);
+    caret.current = r.caret;
+    setActive(r.caret.sec);
+    setPlaced(`Цитату вставлено в розділ «${nameOf(r.caret.sec)}».`);
   };
+
+  // Figures and tables.
+  const sig = useMemo(() => dataSig(props.shared), [props.shared.apps, props.shared.codes, props.shared.cats, props.shared.supers, props.shared.interviews, props.shared.tones]);
+  const nums = numbers(draft, keys);
+  const label = (f: Float) => (f.kind === "fig" ? (en ? "Figure" : "Рисунок") : en ? "Table" : "Таблиця");
+  const setFloat = (id: string, f: Float) => edit({ ...latest.current, floats: { ...latest.current.floats, [id]: f } });
+  const levels = props.shared.levels ?? LEVELS[props.method] ?? LEVELS[""];
+  const buildRows = (t: Omit<TabFloat, "rows" | "cols" | "n" | "sig">) => ({ ...t, ...themeTable(props.shared, t, fragText, isVoice, lang), sig } as TabFloat);
+  const insertTable = () => {
+    const supers = props.shared.supers.length > 0;
+    const t = buildRows({ kind: "tab", variant: "themes", title: tableTitle("themes", supers, en), note: "", showPeople: fmt === "ІФА", showQuote: true, names: {}, picks: {} });
+    t.note = en ? `N = ${t.n}. Participant names are pseudonyms; names and places in quotes have been replaced.` : `N = ${t.n}. Псевдоніми учасників(ць) змінено; імена й назви місць у цитатах замінено.`;
+    const id = newId(), r = putFloat(draft, keys, caret.current, id, t);
+    edit(r.article);
+    setPlaced(`Таблицю ${numbers(r.article, keys).get(id)} вставлено в розділ «${nameOf(r.sec)}».`);
+    setTimeout(() => document.getElementById(`fl-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" }));
+  };
+  const refer = (id: string) => {
+    const f = draft.floats![id], n = nums.get(id);
+    if (!caret.current) { setPlaced("Поставте курсор у тексті, куди вставити посилання."); return; }
+    const text = en ? `(see ${label(f)} ${n})` : `(див. ${f.kind === "fig" ? "Рисунок" : "Таблицю"} ${n})`;
+    const r = putText(draft, keys, caret.current, { text, block: false });
+    edit(r.article);
+    caret.current = r.caret;
+    setPlaced(`Посилання ${text} вставлено.`);
+  };
+  const remove = (id: string) => {
+    const before = latest.current, f = before.floats![id], next = dropFloat(before, keys, id);
+    window.clearTimeout(timer.current); pending.current = false; // saved together with the removal
+    latest.current = next; setDraft(next);
+    props.undoable(`${label(f)} ${nums.get(id)} прибрано зі статті; посилання на ${f.kind === "fig" ? "нього" : "неї"} тепер «?».`, before, next);
+  };
+  const candidates = (cat: string) => {
+    const codes = new Set(props.shared.codes.filter((c) => c.cat === cat).map((c) => c.id));
+    return fragments(props.shared.apps.filter((a) => codes.has(a.code))).filter(isVoice).map((f) => ({ f, q: fragText(f) })).filter((x) => x.q);
+  };
+
+  // Called as functions, not mounted as components: a component declared here would be new on every render and lose the cursor.
+  function FloatView(fp: { id: string; f: Float }) {
+    const { id, f } = fp, n = nums.get(id), ro = props.readOnly;
+    const changed = f.sig !== sig;
+    return (
+      <div className="artfloat" id={`fl-${id}`}>
+        <div className="apapage">
+          <p className="apanum">{label(f)} {n}</p>
+          {ro ? <p className="apatitle">{f.title}</p>
+            : <input className="apatitle apain" value={f.title} onChange={(e) => setFloat(id, { ...f, title: e.target.value })} aria-label={`Назва: ${label(f)} ${n}`} />}
+          {f.kind === "fig"
+            ? <img src={svgUrl(f.svg)} alt={f.title} style={{ width: `${f.w * 72}px`, maxWidth: "100%" }} />
+            : TableView({ id, t: f })}
+          {ro ? (f.note.trim() && <p className="apanote"><i>{en ? "Note." : "Примітка."}</i> {f.note}</p>) : (
+            <label className="row" style={{ gap: 6, alignItems: "baseline", flexWrap: "nowrap" }}><i style={{ flex: "none" }}>{en ? "Note." : "Примітка."}</i>
+              <textarea className="apanote apain grow" rows={1} ref={grow} onInput={(e) => grow(e.currentTarget)} value={f.note} onChange={(e) => setFloat(id, { ...f, note: e.target.value })} aria-label={`Примітка: ${label(f)} ${n}`} /></label>
+          )}
+        </div>
+        {!ro && (
+          <div className="row" style={{ gap: "6px 14px", fontSize: 12 }}>
+            <button className="link" onClick={() => edit(moveFloat(latest.current, keys, id, -1))} aria-label={`Вище: ${label(f)} ${n}`}>↑ Вище</button>
+            <button className="link" onClick={() => edit(moveFloat(latest.current, keys, id, 1))} aria-label={`Нижче: ${label(f)} ${n}`}>↓ Нижче</button>
+            <button className="link" onMouseDown={(e) => e.preventDefault()} onClick={() => refer(id)}>↳ Послатися в тексті</button>
+            {f.kind === "fig" && <span className="small">{f.bw ? "чорно-білий" : "кольоровий"}{f.landscape ? " · альбомна сторінка" : ""}</span>}
+            <span className="grow" />
+            <button className="link danger" onClick={() => remove(id)}>Прибрати зі статті</button>
+          </div>
+        )}
+        {changed && !ro && (
+          <div className="warnline row" style={{ gap: 10 }}>
+            <span className="grow">Кодування змінилося після вставлення: {f.kind === "fig" ? "рисунок" : "таблиця"} показує дані на той момент.</span>
+            <button className="btn sm" onClick={() => (f.kind === "fig" ? props.openFigure(id) : setFloat(id, buildRows(f)))}>Оновити за поточним кодуванням</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function TableView(tp: { id: string; t: TabFloat }) {
+    const { id, t } = tp, ro = props.readOnly;
+    const set = (p: Partial<TabFloat>) => setFloat(id, { ...t, ...p });
+    const theme = en ? "Theme" : levels.mid;
+    const supers = t.rows.some((r) => r.sup);
+    const width = t.variant === "presence" ? t.cols.length + 2 : 1 + +t.showPeople + +t.showQuote;
+    let last: string | undefined = "\u0000";
+    const name = (rid: string, nm: string) => (ro ? nm : <input className="apain" value={t.names[rid] ?? nm} onChange={(e) => set({ names: { ...t.names, [rid]: e.target.value }, rows: t.rows.map((r) => (r.id === rid ? { ...r, name: e.target.value } : r)) })} aria-label="Назва теми" />);
+    return (
+      <div className="stack" style={{ gap: 8 }}>
+        {!ro && (
+          <div className="row tabctl" style={{ gap: "6px 14px" }}>
+            <div className="seg" role="group" aria-label="Вигляд таблиці">
+              {(["themes", "presence"] as const).map((v) => <button key={v} aria-pressed={t.variant === v} onClick={() => set({ variant: v, ...(t.title === tableTitle(t.variant, props.shared.supers.length > 0, en) ? { title: tableTitle(v, props.shared.supers.length > 0, en) } : {}) })}>{v === "themes" ? "Теми й цитати" : "Матриця присутності"}</button>)}
+            </div>
+            {t.variant === "themes" && <>
+              <label className="check"><input type="checkbox" checked={t.showPeople} onChange={(e) => set({ showPeople: e.target.checked })} /><span>Учасники(ці)</span></label>
+              <label className="check"><input type="checkbox" checked={t.showQuote} onChange={(e) => set({ showQuote: e.target.checked })} /><span>Ілюстративна цитата</span></label>
+            </>}
+          </div>
+        )}
+        {!ro && fmt === "РТА" && (t.showPeople || t.variant === "presence") && <span className="small">У рефлексивному ТА кількість учасників(ць) не є мірилом важливості теми (Браун і Кларк) — подумайте, чи потрібен цей стовпець.</span>}
+        {!ro && t.variant === "presence" && t.cols.length >= 10 && <span className="small accent">Таблиця широка: в експорті буде на альбомній сторінці.</span>}
+        <table className="apatable">
+          <thead><tr>
+            <th>{theme}</th>
+            {t.variant === "presence" ? <>{t.cols.map((c, i) => <th key={i}>{c}</th>)}<th>{en ? "Total" : "Разом"}</th></>
+              : <>{t.showPeople && <th>{en ? "Participants" : "Учасники(ці)"}</th>}{t.showQuote && <th>{en ? "Illustrative quote" : "Ілюстративна цитата"}</th>}</>}
+          </tr></thead>
+          <tbody>
+            {t.rows.map((r) => {
+              const head = supers && r.sup !== last ? <tr key={"s" + r.id} className="tsup"><td colSpan={width}>{r.sup ?? (en ? "Other themes" : "Інші теми")}</td></tr> : null;
+              last = r.sup;
+              const choose = picking === `${id}|${r.id}`;
+              return [head, (
+                <tr key={r.id}>
+                  <td>{name(r.id, r.name)}</td>
+                  {t.variant === "presence" ? <>{(r.cells ?? []).map((c, i) => <td key={i} className="mid">{c ? "✓" : ""}</td>)}<td className="mid">{r.people.length}</td></> : <>
+                    {t.showPeople && <td>{r.people.join(", ")} ({r.people.length} {en ? "of" : "з"} {t.n})</td>}
+                    {t.showQuote && <td>{r.quote ?? "—"}{!ro && <> <button className="link" style={{ fontSize: 12, fontFamily: "var(--sans)" }} onClick={() => setPicking(choose ? null : `${id}|${r.id}`)}>{choose ? "Закрити" : "Обрати цитату"}</button></>}
+                      {choose && (
+                        <div className="stack qpick" role="radiogroup" aria-label={`Цитата для теми «${r.name}»`}>
+                          {candidates(r.id).map(({ f: fr, q }) => {
+                            const iv = ivOf(fr.iv)!, k = fragKey(fr);
+                            return (
+                              <label key={k} className="check">
+                                <input type="radio" name={`pick-${id}-${r.id}`} checked={r.pick === k} onChange={() => {
+                                  set({ picks: { ...t.picks, [r.id]: k }, rows: t.rows.map((x) => (x.id === r.id ? { ...x, pick: k, quote: formatQuote(q, iv.card.pseudonym, iv.n, lang).text.replace(/^> /, "") } : x)) });
+                                  setPicking(null);
+                                }} />
+                                <span>«{q.length > 180 ? q.slice(0, 179) + "…" : q}» <span className="small">({iv.card.pseudonym}, {String(iv.n).padStart(2, "0")})</span></span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </td>}
+                  </>}
+                </tr>
+              )];
+            })}
+          </tbody>
+        </table>
+        {!t.rows.length && <span className="small">Тем ще немає: об'єднайте коди в категорії на вкладці «Кодування».</span>}
+      </div>
+    );
+  }
+
   const remarksOf = (sec: string) => Object.entries(props.notes).filter(([k]) => k.startsWith(`art:${sec}:`));
 
   return (
@@ -152,6 +307,8 @@ export default function ArticleView(props: {
               })}
               <button className="link" style={{ alignSelf: "flex-start", fontSize: 13 }} onClick={() => setConf([...conf, { key: `c${newId().slice(0, 8)}`, name: "" }])}>+ Розділ</button>
             </div>
+            <label className="check" style={{ fontSize: 13 }}><input type="checkbox" checked={!!j.floatsAtEnd} onChange={(e) => setJ({ floatsAtEnd: e.target.checked })} />
+              <span>Таблиці й рисунки — в кінці статті, кожен(на) з нової сторінки (інакше — у тексті, де вони стоять). Діє в експорті у Word.</span></label>
             <label className="stack" style={{ gap: 4, fontSize: 13 }}>Інші вимоги журналу — видно над статтею, коли панель закрита
               <textarea className="input" rows={3} value={j.other} onChange={(e) => setJ({ other: e.target.value })} placeholder="Напр.: анонімізований рукопис; структурована анотація; ключові слова англійською…" /></label>
             <div className="row" style={{ gap: 10 }}>
@@ -161,10 +318,15 @@ export default function ArticleView(props: {
           </div>
         )}
         {!props.readOnly && (
+          <div className="stack" style={{ gap: 6 }}>
           <div className="row" style={{ gap: 10 }}>
             <button className={"btn sm" + (quotes ? " primary" : "")} aria-expanded={quotes} onClick={() => setQuotes(!quotes)} disabled={!props.shared.apps.length}
               title={props.shared.apps.length ? undefined : "Цитати з'являться, коли закодуєте хоча б один фрагмент"}>Цитати з кодування{quotes ? " ▸" : " ◂"}</button>
-            {quotes && <span className="small">Поставте курсор у тексті розділу й натисніть «Вставити» біля цитати. Без курсора цитата піде в кінець розділу «{(secs.find((x) => x.key === "results") ?? secs[secs.length - 1]).name}».</span>}
+            <button className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={insertTable} disabled={!props.shared.cats.length}
+              title={props.shared.cats.length ? undefined : "Таблиця будується з категорій (тем) вкладки «Кодування»"}>↳ Вставити таблицю тем</button>
+            <button className="btn sm quiet" onClick={() => { flush(); props.toAnalysis(); }} disabled={!props.shared.apps.length}>Рисунок з візуального аналізу →</button>
+          </div>
+          {(quotes || placed) && <span className="small">{placed || `Поставте курсор у тексті розділу й натисніть «Вставити» біля цитати. Без курсора цитата піде в кінець розділу «${nameOf(resultsKey(keys))}».`}</span>}
           </div>
         )}
         {props.readOnly && <div className="warnline" style={{ borderStyle: "solid" }}>Статтю пише власник(ця) проєкту.{props.supervisor ? " Виділіть речення й натисніть «+ Зауваження» під розділом." : ""}</div>}
@@ -180,11 +342,14 @@ export default function ArticleView(props: {
                 <Count n={countWords(text)} limit={d.limit || undefined} />
               </div>
               {d.hint && <details className="arthint"><summary>{draft.journal?.sections?.find((c) => c.key === k)?.hint?.trim() ? "Вимога журналу" : "Що писати"}</summary><p>{d.hint}</p></details>}
-              <textarea className="input mono arttext" value={text} readOnly={props.readOnly} rows={3} aria-label={`Текст розділу «${d.name}»`}
-                ref={grow} onInput={(e) => grow(e.currentTarget)}
-                onFocus={() => setActive(k)} onBlur={flush}
-                onSelect={(e) => { const t = e.currentTarget; selection.current[k] = t.value.slice(t.selectionStart, t.selectionEnd).trim(); caret.current = { sec: k, pos: t.selectionEnd }; }}
-                onChange={(e) => edit({ ...draft, texts: { ...draft.texts, [k]: e.target.value } })} />
+              {split(text).map((p, i, ps) => ("text" in p ? (
+                <textarea key={`t${i}`} className={"input mono arttext" + (i ? " more" : "")} value={p.text} readOnly={props.readOnly} rows={i ? 1 : 3}
+                  aria-label={i ? `Текст розділу «${d.name}» після ${draft.floats?.[(ps[i - 1] as { id: string }).id]?.kind === "tab" ? "таблиці" : "рисунка"}` : `Текст розділу «${d.name}»`}
+                  ref={grow} onInput={(e) => grow(e.currentTarget)}
+                  onFocus={() => setActive(k)} onBlur={flush}
+                  onSelect={(e) => { const t = e.currentTarget; selection.current[k] = t.value.slice(t.selectionStart, t.selectionEnd).trim(); caret.current = { sec: k, seg: i / 2, pos: t.selectionEnd }; }}
+                  onChange={(e) => { const n = [...ps]; n[i] = { text: e.target.value }; edit({ ...draft, texts: { ...draft.texts, [k]: join(n) } }); }} />
+              ) : draft.floats?.[p.id] ? <Fragment key={p.id}>{FloatView({ id: p.id, f: draft.floats[p.id] })}</Fragment> : null))}
 
               {remarksOf(k).map(([key, n]) => (
                 <div key={key} className="artremark">
@@ -208,7 +373,8 @@ export default function ArticleView(props: {
             </section>
           );
         })}
-        <p className="small">Список літератури з перевіркою за APA 7 з'явиться на етапі 6; рисунки й таблиця тем — на кроці 5.4; експорт у Word і PDF — 5.5.</p>
+        <p className="small">Рисунки й таблиці не входять у ліміт слів. Список літератури з перевіркою за APA 7 з'явиться на етапі 6; експорт у Word і PDF — на кроці 5.5.</p>
+
       </div>
 
       {quotes && !props.readOnly && (

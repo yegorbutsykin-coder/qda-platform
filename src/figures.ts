@@ -152,6 +152,7 @@ const TITLES: Record<string, (n: number, lang: Lang) => string> = {
   saturation: (n, l) => (l === "uk" ? `Нові й накопичені коди ${inN(n, l)}` : `New and Cumulative Codes ${inN(n, l)}`),
   agreement: (_n, l) => (l === "uk" ? "Збіг кодування між дослідниками(цями)" : "Overlap in Coding Between Researchers"),
   people: (_n, l) => (l === "uk" ? "Використання кодів дослідниками(цями)" : "Use of Codes by Researcher"),
+  groups: (n, l) => (l === "uk" ? `Частка учасників(ць), в інтерв'ю яких є код, за групами (${n} інтерв'ю)` : `Share of Participants With Each Code, by Group (${n} Interviews)`),
   time: (n, l) => (l === "uk" ? `Займенники й часові маркери в закодованих фрагментах ${inN(n, l)}` : `Pronouns and Tense Markers in Coded Segments ${inN(n, l)}`),
   tone: (n, l) => (l === "uk" ? `Емоційне забарвлення закодованих фрагментів ${inN(n, l)}` : `Emotional Tone of Coded Segments ${inN(n, l)}`),
 };
@@ -163,6 +164,7 @@ const READ: Record<string, [string, string]> = {
   saturation: ["Угорі — нові коди в кожному інтерв'ю, унизу — накопичена кількість кодів.", "Top: new codes in each interview; bottom: cumulative number of codes."],
   agreement: ["Частка фрагментів, позначених трьома й більше, двома чи одним(ною) дослідником(цею).", "Share of segments coded by three or more, two, or one researcher."],
   people: ["Число — кількість фрагментів, позначених кодом.", "Values show the number of segments coded."],
+  groups: ["Число — скільки людей групи мають код в інтерв'ю з усіх людей групи; темніше — більша частка.", "Values show how many participants in each group had the code in their interview; darker shading indicates a larger share."],
   time: ["Частки слів-індикаторів у висловлюваннях учасників(ць); числа — кількість слів. Підрахунок за словниками, допоміжний.", "Shares of indicator words in participants' coded speech; numbers are word counts. Dictionary-based counts are indicative only."],
   tone: ["Враховано лише фрагменти, забарвлення яких підтвердив(ла) дослідник(ця); числа — кількість фрагментів.", "Only segments whose tone was confirmed by a researcher are included; numbers are segment counts."],
 };
@@ -181,4 +183,33 @@ export function apaNote(tool: string, n: number, coders: number, lang: Lang): st
   return lang === "uk"
     ? `N = ${n} інтерв'ю; ${who}. ${read} Імена учасників(ць) змінено.`
     : `N = ${n} interviews; ${who}. ${read} Participant names are pseudonyms.`;
+}
+
+// ---------- groups by participant characteristics (4.4) ----------
+
+/**
+ * Splits interviews into groups by a characteristic: each value for choices and text;
+ * numbers with more than four values — at the median ("до m" / "понад m"). Empty → «не вказано».
+ */
+export function groupBy(items: { id: string; value: string }[], numeric: boolean): { name: string; ids: string[] }[] {
+  const by = new Map<string, string[]>();
+  const add = (k: string, id: string) => by.set(k, [...(by.get(k) ?? []), id]);
+  const nums = items.map((x) => ({ ...x, n: parseFloat(x.value.replace(",", ".")) }));
+  const known = nums.filter((x) => x.value.trim() && !Number.isNaN(x.n));
+  if (numeric && new Set(known.map((x) => x.n)).size > 4) {
+    const sorted = known.map((x) => x.n).sort((a, b) => a - b);
+    const m = sorted[Math.floor((sorted.length - 1) / 2)];
+    for (const x of nums) add(!x.value.trim() || Number.isNaN(x.n) ? "не вказано" : x.n <= m ? `до ${m} включно` : `понад ${m}`, x.id);
+    return [...by].map(([name, ids]) => ({ name, ids })).sort((a, b) => (a.name === "не вказано" ? 1 : b.name === "не вказано" ? -1 : a.name.startsWith("до") ? -1 : 1));
+  }
+  for (const x of items) add(x.value.trim() || "не вказано", x.id);
+  const order = (a: string) => (a === "не вказано" ? 1 : 0);
+  return [...by].map(([name, ids]) => ({ name, ids }))
+    .sort((a, b) => order(a.name) - order(b.name) || (numeric ? parseFloat(a.name) - parseFloat(b.name) : a.name.localeCompare(b.name, "uk")));
+}
+
+/** Share of people in a group whose interviews have the code (not fragments: one talkative person counts once). */
+export function shareWithCode(apps: App[], code: string, ids: string[]): number {
+  const has = new Set(apps.filter((a) => a.code === code).map((a) => a.iv));
+  return ids.length ? ids.filter((id) => has.has(id)).length / ids.length : 0;
 }

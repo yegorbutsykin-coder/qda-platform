@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agreement, apaNote, apaTitle, byPerson, codesByCategory, cooccurrence, fragments, matrix, saturationCurve, saturationWords, slice } from "./figures";
+import { agreement, apaNote, apaTitle, byPerson, codesByCategory, cooccurrence, fragments, groupBy, matrix, saturationCurve, saturationWords, shareWithCode, slice } from "./figures";
 import type { App, Code } from "./coding";
 
 const A = (id: string, code: string, iv: string, s: number, e: number, by = "p1", rep = 0): App => ({ id, code, iv, rep, s, e, by, at: 0 });
@@ -53,5 +53,20 @@ describe("APA 7 figure texts", () => {
   it("a general note with N, whose coding and pseudonyms", () => {
     expect(apaNote("cooc", 7, 2, "uk")).toBe("N = 7 інтерв'ю; кодування двох дослідників(ць). Розмір кола — кількість фрагментів коду; товщина й число лінії — скільки разів коди позначено на тих самих словах. Імена учасників(ць) змінено.");
     expect(apaNote("matrix", 3, 1, "en")).toMatch(/^N = 3 interviews; coding by one researcher\. .* Participant names are pseudonyms\.$/);
+  });
+});
+
+describe("groups by characteristics", () => {
+  it("each value for choices; empty is «не вказано», last", () => {
+    expect(groupBy([{ id: "1", value: "жінка" }, { id: "2", value: "" }, { id: "3", value: "чоловік" }, { id: "4", value: "жінка" }], false))
+      .toEqual([{ name: "жінка", ids: ["1", "4"] }, { name: "чоловік", ids: ["3"] }, { name: "не вказано", ids: ["2"] }]);
+  });
+  it("numbers with many values split at the median", () => {
+    const g = groupBy(["19", "25", "31", "40", "52", "60"].map((value, i) => ({ id: String(i), value })), true);
+    expect(g.map((x) => [x.name, x.ids.length])).toEqual([["до 31 включно", 3], ["понад 31", 3]]);
+  });
+  it("share of people, not fragments", () => {
+    const apps = [A("1", "c", "i1", 0, 1), A("2", "c", "i1", 2, 3), A("3", "c", "i1", 4, 5), A("4", "c", "i2", 0, 1)];
+    expect(shareWithCode(apps, "c", ["i1", "i3"])).toBe(0.5);
   });
 });

@@ -2,7 +2,7 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { agreement, byPerson, codesByCategory, cooccurrence, fragments, matrix, saturationCurve, saturationWords, slice, type Rect } from "./figures";
+import { agreement, byPerson, codesByCategory, cooccurrence, fragments, groupBy, matrix, saturationCurve, saturationWords, shareWithCode, slice, type Rect } from "./figures";
 import { seconds } from "./Player";
 import ApaFigure from "./ApaFigure";
 import { characteristic, kwic, PRONOUNS, pronouns, suggestTone, TENSES, tenses, TONES, type Tone } from "./language";
@@ -16,16 +16,16 @@ const GROUPS: { title: string; tools: { id: Tool; name: string; step?: string }[
   { title: "Як розгортається розповідь", tools: [{ id: "strip", name: "Смуга інтерв'ю" }, { id: "saturation", name: "Сатурація" }] },
   { title: "Спільне кодування", tools: [{ id: "agreement", name: "Збіг бачення" }, { id: "people", name: "Дослідник(ця) × код" }] },
   { title: "Мова учасників(ць)", tools: [{ id: "kwic", name: "Слова в контексті" }, { id: "time", name: "Час і займенники" }, { id: "tone", name: "Емоційне забарвлення" }] },
-  { title: "Порівняння груп", tools: [{ id: "groups", name: "Характеристики учасників(ць)", step: "4.4" }] },
+  { title: "Порівняння груп", tools: [{ id: "groups", name: "Характеристики учасників(ць)" }] },
 ];
 const FONT = "Inter, Helvetica, Arial, sans-serif";
 const INK = "#1E1E1C", MUTED = "#5F5D58", LINE = "#DCD9D1", LOOSE = "#9A968E";
 
 /** Rows of codes grouped by category × columns; darker = more. */
-function Heat(props: { groups: { cat: { name: string; color: string } | null; codes: Code[] }[]; cols: { id: string; label: string }[]; value: (code: string, col: string) => number; title: string }) {
+function Heat(props: { groups: { cat: { name: string; color: string } | null; codes: Code[] }[]; cols: { id: string; label: string }[]; value: (code: string, col: string) => number; title: string; text?: (code: string, col: string) => string; max?: number }) {
   const { groups, cols } = props;
   const LW = 190, CW = 40, RH = 22, TOP = 96;
-  const max = Math.max(1, ...groups.flatMap((g) => g.codes.flatMap((c) => cols.map((k) => props.value(c.id, k.id)))));
+  const max = props.max ?? Math.max(1, ...groups.flatMap((g) => g.codes.flatMap((c) => cols.map((k) => props.value(c.id, k.id)))));
   let y = TOP;
   const rows: ReactNode[] = [];
   for (const g of groups) {
@@ -42,7 +42,7 @@ function Heat(props: { groups: { cat: { name: string; color: string } | null; co
           const t = v / max;
           return <g key={k.id}>
             <rect x={LW + j * CW + 1} y={y + 1} width={CW - 2} height={RH - 2} fill={v ? INK : "none"} fillOpacity={v ? 0.12 + 0.88 * t : 0} stroke={LINE} />
-            {v > 0 && <text x={LW + j * CW + CW / 2} y={y + 15} fontSize={11} textAnchor="middle" fill={t > 0.5 ? "#fff" : INK}>{v}</text>}
+            {(v > 0 || props.text) && <text x={LW + j * CW + CW / 2} y={y + 15} fontSize={11} textAnchor="middle" fill={t > 0.5 ? "#fff" : INK}>{props.text ? props.text(c.id, k.id) : v}</text>}
           </g>;
         })}
       </g>);
@@ -145,6 +145,7 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
   const [onlyP, setOnlyP] = useState(true);
   const [toneShow, setToneShow] = useState<"todo" | "all">("todo");
   const [toneMax, setToneMax] = useState(40);
+  const [charKey, setCharKey] = useState(() => s.fields.find((f) => f.type === "choice")?.id ?? "gender");
   const fig = useRef<HTMLDivElement>(null);
   const coders = [...new Set(s.apps.map((a) => a.by))];
   const order = s.interviews.filter((x) => ivs.has(x.id));
@@ -469,6 +470,51 @@ export default function Analysis(props: { shared: Shared; priv: Private; method:
       </div>
     );
     note = <>Пунктирна рамка — пропозиція програми за словами-індикаторами (української й російської); натисніть, щоб підтвердити, повторне натискання знімає позначку. Рахуються лише підтверджені. Словники емоцій не розуміють іронії, заперечення («не страшно») і контексту — позначку завжди ставить дослідник(ця).</>;
+  }
+  if (tool === "groups") {
+    const chars = [
+      { key: "gender", name: "Стать", numeric: false, val: (c: Shared["interviews"][number]["card"]) => c.gender === "не вказано" ? "" : c.gender },
+      { key: "age", name: "Вік", numeric: true, val: (c: Shared["interviews"][number]["card"]) => c.age },
+      ...s.fields.map((f) => ({ key: f.id, name: f.name, numeric: f.type === "number", val: (c: Shared["interviews"][number]["card"]) => c.values[f.id] ?? "" })),
+    ];
+    const ch = chars.find((c) => c.key === charKey) ?? chars[0];
+    const gs = groupBy(order.map((v) => ({ id: v.id, value: ch.val(v.card) })), ch.numeric);
+    const groupOf = (id: string) => gs.find((g) => g.ids.includes(id))?.name ?? "";
+    const share = (code: string, g: string) => shareWithCode(apps, code, gs.find((x) => x.name === g)!.ids);
+    // A live example: the code whose share differs most between groups.
+    const real = gs.filter((g) => g.name !== "не вказано");
+    let ex: { code: string; a: typeof gs[number]; b: typeof gs[number]; d: number } | null = null;
+    for (const c of groups.flatMap((g) => g.codes)) for (const a of real) for (const b of real) {
+      const d = share(c.id, a.name) - share(c.id, b.name);
+      if (d > (ex?.d ?? 0)) ex = { code: c.id, a, b, d };
+    }
+    const cnt = (code: string, g: { ids: string[] }) => Math.round(shareWithCode(apps, code, g.ids) * g.ids.length);
+    body = (
+      <div className="stack" style={{ gap: 14 }}>
+        <div className="row" style={{ gap: 6 }} role="group" aria-label="Характеристика">
+          <span className="small">Розріз за:</span>
+          {chars.map((c) => <button key={c.key} className={"chip" + (c.key === ch.key ? " on" : "")} aria-pressed={c.key === ch.key} onClick={() => setCharKey(c.key)}>{c.name}</button>)}
+        </div>
+        <table className="cardtable">
+          <thead><tr><th>Інтерв'ю</th><th>Стать</th><th>Вік</th>{s.fields.map((f) => <th key={f.id} className={f.id === ch.key ? "hl" : ""}>{f.name}</th>)}<th>Група</th></tr></thead>
+          <tbody>{order.map((v) => (
+            <tr key={v.id}>
+              <td className="mono">{label(v)}</td>
+              <td className={ch.key === "gender" ? "hl" : ""}>{v.card.gender || "—"}</td>
+              <td className={ch.key === "age" ? "hl" : ""}>{v.card.age || "—"}</td>
+              {s.fields.map((f) => <td key={f.id} className={f.id === ch.key ? "hl" : ""}>{v.card.values[f.id] || "—"}</td>)}
+              <td><b>{groupOf(v.id)}</b></td>
+            </tr>
+          ))}</tbody>
+        </table>
+        {groups.length ? <Heat title={toolName} groups={groups} cols={gs.map((g) => ({ id: g.name, label: `${g.name} (${g.ids.length})` }))} max={100}
+          value={(c, g) => Math.round(share(c, g) * 100)} text={(c, g) => `${cnt(c, gs.find((x) => x.name === g)!)}/${gs.find((x) => x.name === g)!.ids.length}`} /> : null}
+        {ex && <div className="panel" style={{ fontSize: 13, lineHeight: 1.7 }}>
+          <b>Як читати:</b> код «{name(ex.code)}» є в інтерв'ю {cnt(ex.code, ex.a)} з {ex.a.ids.length} людей групи «{ex.a.name}» ({Math.round(share(ex.code, ex.a.name) * 100)} %) і {cnt(ex.code, ex.b)} з {ex.b.ids.length} — групи «{ex.b.name}» ({Math.round(share(ex.code, ex.b.name) * 100)} %). Скільки разів людина про це говорила, не важить.
+        </div>}
+      </div>
+    );
+    note = <>Клітинка — частка людей групи, в інтерв'ю яких є код (а не кількість фрагментів), щоб одна багатослівна людина не перекошувала картину; темніше — більша частка. Числові характеристики з кількома значеннями поділено за медіаною. У малих групах кожна людина змінює частку дуже помітно — це привід придивитися, а не висновок.</>;
   }
   if (tool === "agreement") {
     const g = agreement(apps.filter(() => whose === "all"));

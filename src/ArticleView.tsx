@@ -2,7 +2,7 @@
 import { createPortal } from "react-dom";
 import { Fragment, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import {
-  countWords, dataSig, dropFloat, exportBlocks, formatQuote, fragKey, join, journalChanged, METHODS, moveFloat, numbers, putFloat, putText, resetJournal, resultsKey,
+  addRefs, countWords, dataSig, dropFloat, exportBlocks, isCyrillic, refsSorted, rich, sortRefs, formatQuote, fragKey, join, journalChanged, METHODS, moveFloat, numbers, putFloat, putText, resetJournal, resultsKey,
   sectionsOf, split, themeTable, totalLimit, type Article, type Block, type Caret, type FigFloat, type Float, type Journal, type Method, type SectionConf, type TabFloat,
 } from "./article";
 import { LEVELS } from "./coding";
@@ -18,6 +18,9 @@ const tableTitle = (v: TabFloat["variant"], supers: boolean, en: boolean) => v =
   ? (en ? "Presence of Themes Across Participants" : "Присутність тем в інтерв'ю учасників(ць)")
   : en ? (supers ? "Superordinate Themes, Themes, and Illustrative Quotes" : "Themes and Illustrative Quotes") : (supers ? "Супертеми, теми та ілюстративні цитати" : "Теми та ілюстративні цитати");
 
+/** Text with *italics*. */
+const Rich = (p: { text: string }) => <>{rich(p.text).map((x, i) => (x.i ? <i key={i}>{x.text}</i> : <Fragment key={i}>{x.text}</Fragment>))}</>;
+
 /** "N = 7 …" with the N in italics (APA sets statistical symbols in italics). */
 const Note = (p: { label: string; text: string }) => (
   <p className="apanote"><i>{p.label}</i> {/^N[ \u00a0]/.test(p.text) ? <><i>N</i>{p.text.slice(1)}</> : p.text}</p>
@@ -30,7 +33,8 @@ function PrintDoc(props: { blocks: Block[]; en: boolean }) {
     <div className="printdoc" aria-hidden="true">
       {props.blocks.map((b, i) => {
         if (b.k === "title") return <p key={i} className={"ptitle" + (b.brk ? " pbreak" : "")}>{b.text}</p>;
-        if (b.k === "h1") return <h1 key={i}>{b.text}</h1>;
+        if (b.k === "h1") return <h1 key={i} className={b.brk ? "pbreak" : ""}>{b.text}</h1>;
+        if (b.k === "ref") return <p key={i} className="pref"><Rich text={b.text} /></p>;
         if (b.k === "p") return <p key={i} className={b.indent ? "pind" : ""}>{b.text}</p>;
         if (b.k === "quote") return <blockquote key={i}>{b.text}</blockquote>;
         const f = b.k === "fig" ? b.f : b.t;
@@ -80,7 +84,9 @@ export default function ArticleView(props: {
   const selection = useRef<Record<string, string>>({});
   const caret = props.caret; // where a quote, figure or reference goes; outlives this view
   const [picking, setPicking] = useState<string | null>(null);
-  const [out, setOut] = useState(""); // export status line // "table id|category id" choosing a quote
+  const [out, setOut] = useState(""); // export status line
+  const [refEdit, setRefEdit] = useState<string | null>(null);
+  const [newRefs, setNewRefs] = useState(""); // "table id|category id" choosing a quote
   const [quotes, setQuotes] = useState(false);
   const [qcode, setQcode] = useState<string | null>(null);
   const [placed, setPlaced] = useState("");
@@ -187,6 +193,64 @@ export default function ArticleView(props: {
     flush();
     setOut("У вікні друку оберіть «Зберегти як PDF»: на Mac — кнопка «PDF» унизу вікна, на Windows — принтер «Microsoft Print to PDF».");
     window.print();
+  }
+
+  function RefList() {
+    const refs = draft.refs ?? [], order = draft.refOrder ?? "cyr", sorted = refsSorted(draft), ro = props.readOnly;
+    const setRefs = (list: typeof refs) => edit({ ...latest.current, refs: list });
+    const dropRef = (id: string) => {
+      const before = latest.current, next = { ...before, refs: (before.refs ?? []).filter((r) => r.id !== id) };
+      window.clearTimeout(timer.current); pending.current = false;
+      latest.current = next; setDraft(next);
+      props.undoable("Джерело видалено зі списку літератури.", before, next);
+    };
+    const groups = order === "cyr" && sorted && refs.some((r) => isCyrillic(r.text)) && refs.some((r) => !isCyrillic(r.text));
+    return (
+      <section id="sec-refs" className="artsec" aria-label={en ? "References" : "Список літератури"}>
+        <div className="row" style={{ alignItems: "baseline" }}>
+          <h3 className="grow" style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>{en ? "References" : "Список літератури"}</h3>
+          <span className="small mono">{refs.length} {refs.length % 10 === 1 && refs.length % 100 !== 11 ? "джерело" : [2, 3, 4].includes(refs.length % 10) && ![12, 13, 14].includes(refs.length % 100) ? "джерела" : "джерел"} · не входить у ліміт слів</span>
+        </div>
+        {refs.length > 1 && !ro && (
+          <div className="row" style={{ gap: 10 }}>
+            <div className="seg" role="group" aria-label="Як упорядкувати">
+              <button aria-pressed={order === "cyr"} onClick={() => edit({ ...latest.current, refOrder: "cyr" })}>Кирилиця → латиниця</button>
+              <button aria-pressed={order === "one"} onClick={() => edit({ ...latest.current, refOrder: "one" })}>Одна абетка</button>
+            </div>
+            <button className="btn sm" disabled={sorted} onClick={() => setRefs(sortRefs(refs, order))}>{sorted ? "✓ Упорядковано" : "Упорядкувати за абеткою"}</button>
+            <span className="small grow">{order === "cyr" ? "Спершу джерела кирилицею за українською абеткою, потім латиницею." : "Один список за латинською абеткою — коли журнал вимагає транслітерувати кириличні джерела."}</span>
+          </div>
+        )}
+        <div className="stack" style={{ gap: 2 }}>
+          {refs.map((r, i) => (
+            <Fragment key={r.id}>
+              {groups && (i === 0 || isCyrillic(refs[i - 1].text) !== isCyrillic(r.text)) && <span className="label" style={{ marginTop: i ? 10 : 0 }}>{isCyrillic(r.text) ? "Кирилиця" : "Латиниця"}</span>}
+              {refEdit === r.id && !ro ? (
+                <textarea className="input arttext refline" autoFocus defaultValue={r.text} rows={2} ref={grow} onInput={(e) => grow(e.currentTarget)} aria-label="Опис джерела"
+                  onBlur={(e) => { const t = e.currentTarget.value.replace(/\s*\n\s*/g, " ").trim(); setRefEdit(null); if (t !== r.text) setRefs(refs.map((x) => (x.id === r.id ? { ...x, text: t } : x))); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); if (e.key === "Escape") e.currentTarget.value = r.text; e.currentTarget.blur(); } }} />
+              ) : (
+                <div className="row refrow" style={{ gap: 10, alignItems: "baseline", flexWrap: "nowrap" }}>
+                  <p className="refline grow"><Rich text={r.text} /></p>
+                  {!ro && <button className="link" style={{ fontSize: 12 }} onClick={() => setRefEdit(r.id)} aria-label={`Редагувати: ${r.text.slice(0, 40)}`}>Редагувати</button>}
+                  {!ro && <button className="link danger" style={{ fontSize: 12 }} onClick={() => dropRef(r.id)} aria-label={`Видалити: ${r.text.slice(0, 40)}`}>Видалити</button>}
+                </div>
+              )}
+            </Fragment>
+          ))}
+        </div>
+        {!ro && (
+          <div className="stack" style={{ gap: 6 }}>
+            <textarea className="input" rows={3} value={newRefs} onChange={(e) => setNewRefs(e.target.value)} aria-label="Нові джерела"
+              placeholder={"Вставте одне чи кілька джерел — кожне з нового рядка.\nБоймер, Д. (2021). Невизначена втрата. *Журнал психології*, *12*(3), 45–60. https://doi.org/10.1234/abcd"} />
+            <div className="row" style={{ gap: 10 }}>
+              <button className="btn sm" disabled={!newRefs.trim()} onClick={() => { edit(addRefs(latest.current, newRefs, newId)); setNewRefs(""); }}>Додати до списку</button>
+              <span className="small">Курсив — між зірочками: *Назва журналу*, *12*(3). Перевірка за APA 7 — на кроці 6.2, посилання в тексті — 6.3, імпорт із Zotero — 6.4.</span>
+            </div>
+          </div>
+        )}
+      </section>
+    );
   }
 
   // Called as functions, not mounted as components: a component declared here would be new on every render and lose the cursor.
@@ -312,6 +376,7 @@ export default function ArticleView(props: {
             </a>
           );
         })}
+        <a href="#sec-refs" className="artlink"><span className="grow">{en ? "References" : "Список літератури"}</span><span className="small mono">{(draft.refs ?? []).length}</span></a>
         <div className="stack" style={{ gap: 4, marginTop: 10 }}>
           <span className="small">Разом (без літератури)</span>
           <Count n={total} limit={limit || undefined} />
@@ -439,8 +504,9 @@ export default function ArticleView(props: {
             </section>
           );
         })}
+        {RefList()}
         {createPortal(<PrintDoc blocks={blocks} en={en} />, document.body)}
-        <p className="small">Рисунки й таблиці не входять у ліміт слів. Список літератури з перевіркою за APA 7 з'явиться на етапі 6.</p>
+        <p className="small">Рисунки й таблиці не входять у ліміт слів. Список літератури — останній розділ, у ліміт слів не входить.</p>
 
       </div>
 

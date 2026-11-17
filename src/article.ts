@@ -18,7 +18,13 @@ export type TabFloat = {
   cols: string[]; n: number; rows: TabRow[]; names: Record<string, string>; picks: Record<string, string>; sig: string;
 };
 export type Float = FigFloat | TabFloat;
-export type Article = { title: string; format?: Method; texts: Record<string, string>; journal?: Journal; floats?: Record<string, Float> };
+/** One source of the reference list; *between asterisks* is italics. */
+export type Ref = { id: string; text: string };
+export type RefOrder = "cyr" | "one";
+export type Article = {
+  title: string; format?: Method; texts: Record<string, string>; journal?: Journal; floats?: Record<string, Float>;
+  refs?: Ref[]; refOrder?: RefOrder;
+};
 export const SECTIONS = ["abstract", "intro", "method", "results", "discussion"] as const;
 export type SectionKey = (typeof SECTIONS)[number];
 export const TOTAL_LIMIT = 8000; // a common journal limit; the journal's own goes in «Вимоги журналу»
@@ -233,7 +239,8 @@ export function tableCells(t: TabFloat, en: boolean, mid: string): { head: strin
 
 export type Block =
   | { k: "title"; text: string; brk: boolean }
-  | { k: "h1"; text: string }
+  | { k: "h1"; text: string; brk?: boolean }
+  | { k: "ref"; text: string }
   | { k: "p"; text: string; indent: boolean }
   | { k: "quote"; text: string }
   | { k: "fig"; label: string; f: FigFloat; brk: boolean }
@@ -276,7 +283,39 @@ export function exportBlocks(a: Article, method: Method, mid: string): Block[] {
       (atEnd ? (f.kind === "fig" ? figs : tabs) : out).push(b);
     }
   }
-  return [...out, ...tabs, ...figs];
+  // APA: references after the text, from a new page; then tables, then figures.
+  const refs = (a.refs ?? []).filter((r) => r.text.trim());
+  const list: Block[] = refs.length ? [{ k: "h1", text: en ? "References" : "Список літератури", brk: true }, ...refs.map((r): Block => ({ k: "ref", text: r.text.trim() }))] : [];
+  return [...out, ...list, ...tabs, ...figs];
+}
+
+/** Several sources pasted at once: one per line. */
+export function addRefs(a: Article, text: string, id: () => string): Article {
+  const add = text.split(/\n+/).map((t) => t.trim()).filter(Boolean).map((t) => ({ id: id(), text: t }));
+  return add.length ? { ...a, refs: [...(a.refs ?? []), ...add] } : a;
+}
+
+export const isCyrillic = (t: string) => /^[^\p{L}]*\p{Script=Cyrillic}/u.test(t);
+const UK_SORT = new Intl.Collator("uk", { sensitivity: "base", numeric: true }), EN_SORT = new Intl.Collator("en", { sensitivity: "base", numeric: true });
+// "Brown, J." before "Browning, A.": punctuation becomes a space, and a space comes before any letter ("nothing precedes something").
+const refKey = (t: string) => t.replace(/\*/g, "").replace(/[,.&:;()]/g, " ").replace(/\s+/g, " ").trim();
+
+/**
+ * Alphabetical, by APA. «Кирилиця → латиниця»: Cyrillic sources by the Ukrainian alphabet, then Latin ones;
+ * «Одна абетка»: one list by the Latin alphabet (for journals that want Cyrillic sources transliterated).
+ */
+export function sortRefs(refs: Ref[], order: RefOrder): Ref[] {
+  const by = (c: Intl.Collator) => (x: Ref, y: Ref) => c.compare(refKey(x.text), refKey(y.text));
+  if (order === "one") return [...refs].sort(by(EN_SORT));
+  return [...refs.filter((r) => isCyrillic(r.text)).sort(by(UK_SORT)), ...refs.filter((r) => !isCyrillic(r.text)).sort(by(EN_SORT))];
+}
+export const refsSorted = (a: Article) => sortRefs(a.refs ?? [], a.refOrder ?? "cyr").every((r, i) => r.id === a.refs![i].id);
+
+/** "*Journal*, *12*(3)" → pieces with italics marked. An unpaired asterisk stays as it is. */
+export function rich(t: string): { text: string; i: boolean }[] {
+  const parts = t.split("*");
+  if (parts.length % 2 === 0) return [{ text: t, i: false }];
+  return parts.map((text, n) => ({ text, i: n % 2 === 1 })).filter((p) => p.text);
 }
 
 export const emptyArticle = (): Article => ({ title: "", texts: {} });

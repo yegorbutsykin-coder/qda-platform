@@ -220,6 +220,14 @@ fn picture(n: usize, w: u64, h: u64, label: &str, title: &str) -> String {
     )
 }
 
+/// "*Title*, *12*(3)" → runs with italics; an unpaired asterisk stays as it is.
+fn rich(text: &str, font: &str) -> String {
+    let parts: Vec<&str> = text.split('*').collect();
+    if parts.len() % 2 == 0 { return run(text, font); }
+    parts.iter().enumerate().filter(|(_, p)| !p.is_empty())
+        .map(|(i, p)| if i % 2 == 1 { run(p, &format!("{font}<w:i/>")) } else { run(p, font) }).collect()
+}
+
 /// "N = 7 …" with the N in italics, as APA sets statistical symbols.
 fn note_runs(note: &str, font: &str) -> String {
     match note.strip_prefix('N').filter(|r| r.starts_with(' ') || r.starts_with('\u{a0}')) {
@@ -255,7 +263,8 @@ pub fn write_figure_docx(path: &Path, f: &Figure) -> Result<(), String> {
 #[serde(tag = "k", rename_all = "lowercase")]
 pub enum Block {
     Title { text: String, brk: bool },
-    H1 { text: String },
+    H1 { text: String, #[serde(default)] brk: bool },
+    Ref { text: String },
     P { text: String, indent: bool },
     Quote { text: String },
     Fig { label: String, title: String, note_label: String, note: String, img: usize, w_emu: u64, h_emu: u64, landscape: bool, brk: bool },
@@ -303,7 +312,9 @@ pub fn write_article_docx(path: &Path, blocks: &[Block], images: &[Vec<u8>]) -> 
     for b in blocks {
         match b {
             Block::Title { text, brk } => body += &para(true, *brk, "", "center", run(text, &format!("{font}<w:b/>"))),
-            Block::H1 { text } => body += &para(true, false, "", "center", run(text, &format!("{font}<w:b/>"))),
+            Block::H1 { text, brk } => body += &para(true, *brk, "", "center", run(text, &format!("{font}<w:b/>"))),
+            // Hanging indent 0.5 in; *between asterisks* is italics (journal, volume, book titles).
+            Block::Ref { text } => body += &para(false, false, r#"<w:ind w:left="720" w:hanging="720"/>"#, "", rich(text, font)),
             Block::P { text, indent } => body += &para(false, false, if *indent { r#"<w:ind w:firstLine="720"/>"# } else { "" }, "", run(text, font)),
             Block::Quote { text } => body += &para(false, false, r#"<w:ind w:left="720"/>"#, "", run(text, font)),
             Block::Fig { label, title, note_label, note, img, w_emu, h_emu, landscape, brk } => {
@@ -358,12 +369,14 @@ mod export_tests {
         let png = b"\x89PNG\r\n\x1a\nfake".to_vec();
         let blocks = vec![
             Block::Title { text: "Назва".into(), brk: false },
-            Block::H1 { text: "Анотація".into() },
+            Block::H1 { text: "Анотація".into(), brk: false },
             Block::P { text: "Коротко.".into(), indent: false },
             Block::Title { text: "Назва".into(), brk: true },
             Block::P { text: "Абзац & <текст>.".into(), indent: true },
             Block::Quote { text: "Довга цитата.".into() },
             Block::Fig { label: "Рисунок 1".into(), title: "Матриця".into(), note_label: "Примітка.".into(), note: "N = 3.".into(), img: 0, w_emu: 100, h_emu: 50, landscape: false, brk: false },
+            Block::H1 { text: "Список літератури".into(), brk: true },
+            Block::Ref { text: "Бойко, О. (2019). *Втрата*, *12*(3), 1–9.".into() },
             Block::Tab { label: "Таблиця 1".into(), title: "Теми".into(), note_label: "Примітка.".into(), note: "".into(), head: vec!["Тема".into(), "Учасники(ці)".into()],
                 rows: vec![TabRow { cells: vec!["С".into()], group: true }, TabRow { cells: vec!["Втрата".into(), "Марта".into()], group: false }], landscape: true, brk: true },
         ];
@@ -376,6 +389,7 @@ mod export_tests {
         assert!(doc.contains(r#"<w:pageBreakBefore/>"#) && doc.contains(r#"<w:ind w:firstLine="720"/>"#) && doc.contains(r#"<w:ind w:left="720"/>"#));
         assert!(doc.contains(r#"w:orient="landscape""#) && doc.contains(r#"<w:gridSpan w:val="2"/>"#) && doc.contains(r#"r:embed="rIdImg1""#));
         assert!(z.by_name("word/header1.xml").is_ok() && z.by_name("word/media/figure1.png").is_ok());
+        assert!(doc.contains(r#"<w:ind w:left="720" w:hanging="720"/>"#) && doc.contains(r#"<w:i/></w:rPr><w:t xml:space="preserve">Втрата</w:t>"#) && doc.contains(r#"<w:t xml:space="preserve">, </w:t>"#));
         drop(z);
         fs::remove_file(&path).unwrap();
         assert!(write_article_docx(&path, &[Block::Fig { label: "".into(), title: "".into(), note_label: "".into(), note: "".into(), img: 3, w_emu: 1, h_emu: 1, landscape: false, brk: false }], &[]).is_err());

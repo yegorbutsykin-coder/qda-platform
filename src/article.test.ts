@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countWords, dropFloat, exportBlocks, formatQuote, insertAt, join, moveFloat, numbers, putFloat, putText, settle, split, type Block, type Float, journalChanged, resetJournal, sectionDef, sectionsOf, type Article } from "./article";
+import { addRefs, countWords, dropFloat, exportBlocks, refsSorted, rich, sortRefs, formatQuote, insertAt, join, moveFloat, numbers, putFloat, putText, settle, split, type Block, type Float, journalChanged, resetJournal, sectionDef, sectionsOf, type Article } from "./article";
 
 describe("article", () => {
   it("counts words like a journal: apostrophes and hyphens inside a word", () => {
@@ -105,5 +105,30 @@ describe("export layout by APA 7", () => {
     expect(b.slice(-2).map((x) => ("label" in x ? x.label : x.k))).toEqual(["Table 1", "Figure 1"]);
     expect(b.slice(-2).every((x) => "brk" in x && x.brk)).toBe(true);
     expect(b.filter((x) => x.k === "h1").map((x) => (x as { text: string }).text)).toEqual(["Abstract", "Themes"]);
+  });
+});
+
+describe("reference list", () => {
+  const refs = ["Smith, J. (2020). *Grief*.", "Бойко, О. (2019). Втрата.", "Browning, A. (2018). B.", "Brown, J. (2021). A.", "Ґудзь, І. (2020). Г.", "Гнатюк, В. (2020). В."]
+    .map((text, i) => ({ id: String(i), text }));
+  it("several at once, one per line", () => {
+    let n = 0;
+    const a = addRefs({ title: "", texts: {} }, "Перше.\n\n  Друге.  \n", () => String(++n));
+    expect(a.refs).toEqual([{ id: "1", text: "Перше." }, { id: "2", text: "Друге." }]);
+  });
+  it("Cyrillic by the Ukrainian alphabet, then Latin; Brown before Browning", () => {
+    expect(sortRefs(refs, "cyr").map((r) => r.text.slice(0, 5))).toEqual(["Бойко", "Гнатю", "Ґудзь", "Brown", "Brown", "Smith"]);
+    expect(sortRefs(refs, "cyr").slice(3, 5).map((r) => r.text.slice(0, 8))).toEqual(["Brown, J", "Browning"]);
+    expect(sortRefs(refs, "one")[0].text.startsWith("Brown, J")).toBe(true);
+    expect(refsSorted({ title: "", texts: {}, refs: sortRefs(refs, "cyr") })).toBe(true);
+    expect(refsSorted({ title: "", texts: {}, refs })).toBe(false);
+  });
+  it("italics between asterisks", () => {
+    expect(rich("*Grief*, *12*(3), 1–9.")).toEqual([{ text: "Grief", i: true }, { text: ", ", i: false }, { text: "12", i: true }, { text: "(3), 1–9.", i: false }]);
+    expect(rich("5 * 3")).toEqual([{ text: "5 * 3", i: false }]);
+  });
+  it("exported after the text from a new page, before tables and figures at the end", () => {
+    const b = exportBlocks({ title: "Т", texts: { intro: "Текст." }, refs: [{ id: "1", text: "Бойко, О. (2019)." }, { id: "2", text: " " }] }, "РТА", "Тема");
+    expect(b.slice(-2)).toEqual([{ k: "h1", text: "Список літератури", brk: true }, { k: "ref", text: "Бойко, О. (2019)." }]);
   });
 });

@@ -84,3 +84,53 @@ export function saturationWords(curve: { fresh: string[] }[], names: string[], n
   if (quiet === 0) return `Нові коди з'являються й в останньому інтерв'ю (${names[last]}): кодова книга ще росте.`;
   return `Останні нові коди — в інтерв'ю ${names[last]}; після нього ${quiet} інтерв'ю без нових кодів (позначка — від ${n}).`;
 }
+
+type Frag = { code: string; iv: string; rep: number; s: number; e: number; by: Set<string>; apps: App[] };
+
+/** The same code on overlapping words, by anyone, is one fragment (so two coders do not count twice). */
+export function fragments(apps: App[]): Frag[] {
+  const groups = new Map<string, App[]>();
+  for (const a of apps) {
+    const k = `${a.code}|${a.iv}|${a.rep}`;
+    groups.set(k, [...(groups.get(k) ?? []), a]);
+  }
+  const out: Frag[] = [];
+  for (const list of groups.values()) {
+    let cur: Frag | null = null;
+    for (const a of [...list].sort((x, y) => x.s - y.s)) {
+      if (cur && a.s < cur.e) { cur.e = Math.max(cur.e, a.e); cur.by.add(a.by); cur.apps.push(a); continue; }
+      cur = { code: a.code, iv: a.iv, rep: a.rep, s: a.s, e: a.e, by: new Set([a.by]), apps: [a] };
+      out.push(cur);
+    }
+  }
+  return out;
+}
+
+/** Pairs of codes whose fragments overlap: "a|b" (a < b) → how many times. */
+export function cooccurrence(apps: App[]): Map<string, number> {
+  const bySpot = new Map<string, Frag[]>();
+  for (const f of fragments(apps)) bySpot.set(`${f.iv}|${f.rep}`, [...(bySpot.get(`${f.iv}|${f.rep}`) ?? []), f]);
+  const out = new Map<string, number>();
+  for (const list of bySpot.values()) {
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      const a = list[i], b = list[j];
+      if (a.code === b.code || a.s >= b.e || b.s >= a.e) continue;
+      const k = a.code < b.code ? `${a.code}|${b.code}` : `${b.code}|${a.code}`;
+      out.set(k, (out.get(k) ?? 0) + 1);
+    }
+  }
+  return out;
+}
+
+export type Rect = { x: number; y: number; w: number; h: number };
+/** Splits a rectangle among weights, along its longer side (slice-and-dice: readable, keeps order). */
+export function slice(r: Rect, weights: number[]): Rect[] {
+  const total = weights.reduce((a, b) => a + b, 0) || 1;
+  let at = 0;
+  return weights.map((w) => {
+    const k = w / total;
+    const out = r.w >= r.h ? { x: r.x + at * r.w, y: r.y, w: k * r.w, h: r.h } : { x: r.x, y: r.y + at * r.h, w: r.w, h: k * r.h };
+    at += k;
+    return out;
+  });
+}

@@ -2,14 +2,16 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { agreement, byPerson, codesByCategory, matrix, saturationCurve, saturationWords } from "./figures";
-import type { Code } from "./coding";
-import { initialsOf, pad, type Shared } from "./model";
+import { agreement, byPerson, codesByCategory, cooccurrence, fragments, matrix, saturationCurve, saturationWords, slice, type Rect } from "./figures";
+import { seconds } from "./Player";
+import { applyDict } from "./text";
+import { LEVELS, quote, type Code } from "./coding";
+import { initialsOf, pad, type Private, type Shared } from "./model";
 
 type Tool = "matrix" | "cooc" | "tree" | "strip" | "saturation" | "agreement" | "people" | "tone" | "time" | "kwic" | "groups";
 const GROUPS: { title: string; tools: { id: Tool; name: string; step?: string }[] }[] = [
-  { title: "Як влаштовані теми", tools: [{ id: "matrix", name: "Матриця «код × учасник(ця)»" }, { id: "cooc", name: "Спільна поява кодів", step: "4.2" }, { id: "tree", name: "Ієрархія категорій", step: "4.2" }] },
-  { title: "Як розгортається розповідь", tools: [{ id: "strip", name: "Смуга інтерв'ю", step: "4.2" }, { id: "saturation", name: "Сатурація" }] },
+  { title: "Як влаштовані теми", tools: [{ id: "matrix", name: "Матриця «код × учасник(ця)»" }, { id: "cooc", name: "Спільна поява кодів" }, { id: "tree", name: "Ієрархія категорій" }] },
+  { title: "Як розгортається розповідь", tools: [{ id: "strip", name: "Смуга інтерв'ю" }, { id: "saturation", name: "Сатурація" }] },
   { title: "Спільне кодування", tools: [{ id: "agreement", name: "Збіг бачення" }, { id: "people", name: "Дослідник(ця) × код" }] },
   { title: "Мова учасників(ць)", tools: [{ id: "tone", name: "Емоційне забарвлення", step: "4.3" }, { id: "time", name: "Час і займенники", step: "4.3" }, { id: "kwic", name: "Слова в контексті", step: "4.3" }] },
   { title: "Порівняння груп", tools: [{ id: "groups", name: "Характеристики учасників(ць)", step: "4.4" }] },
@@ -79,12 +81,13 @@ async function saveFigure(svg: SVGSVGElement, name: string): Promise<string> {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
-export default function Analysis(props: { shared: Shared; me: string; onBack: () => void }) {
+export default function Analysis(props: { shared: Shared; priv: Private; method: string; me: string; onBack: () => void; goContext: (iv: string, rep: number) => void }) {
   const s = props.shared;
   const [tool, setTool] = useState<Tool>("matrix");
   const [ivs, setIvs] = useState<Set<string>>(() => new Set(s.interviews.map((x) => x.id)));
   const [whose, setWhose] = useState("all");
   const [saved, setSaved] = useState("");
+  const [picked, setPicked] = useState<number | null>(null); // a mark on the interview strip
   const fig = useRef<HTMLDivElement>(null);
   const coders = [...new Set(s.apps.map((a) => a.by))];
   const order = s.interviews.filter((x) => ivs.has(x.id));
@@ -146,6 +149,145 @@ export default function Analysis(props: { shared: Shared; me: string; onBack: ()
       {curve.filter((c) => c.fresh.length).map((c) => { const v = order.find((x) => x.id === c.iv)!; return <span key={c.iv}>{pad(v.n)} — {c.fresh.map((f) => `«${name(f)}»`).join(", ")}<br /></span>; })}
       Колір частини стовпчика — категорія коду. Сатурація — поняття з обґрунтованої теорії; для РТА та ІФА її застосовність критикують, тож крива — допоміжний інструмент, а не критерій достатності вибірки.
     </>;
+  }
+  if (tool === "cooc") {
+    const pairs = [...cooccurrence(apps)].sort((a, b) => b[1] - a[1]);
+    const nodes = groups.flatMap((g) => g.codes);
+    const frags = fragments(apps);
+    const size = new Map(nodes.map((c) => [c.id, frags.filter((f) => f.code === c.id).length]));
+    const maxN = Math.max(1, ...size.values()), maxE = Math.max(1, ...pairs.map((p) => p[1]));
+    const R = Math.max(110, Math.min(230, nodes.length * 16)), C = { x: R + 170, y: R + 50 };
+    const at = (i: number) => { const a = (i / nodes.length) * 2 * Math.PI - Math.PI / 2; return { x: C.x + R * Math.cos(a), y: C.y + R * Math.sin(a), a }; };
+    const pos = new Map(nodes.map((c, i) => [c.id, at(i)]));
+    const W = 2 * (R + 170), H = 2 * (R + 50);
+    const top = pairs[0];
+    body = !pairs.length ? <span className="small">Жодні два коди ще не стоять на тих самих словах.</span> : (
+      <svg xmlns="http://www.w3.org/2000/svg" width={W} height={H} viewBox={`0 0 ${W} ${H}`} fontFamily={FONT} role="img" aria-label={toolName}>
+        <rect width={W} height={H} fill="#fff" />
+        {pairs.map(([k, n]) => {
+          const [a, b] = k.split("|").map((id) => pos.get(id)!);
+          if (!a || !b) return null;
+          // Lines bend towards the centre, so they cross less than straight chords.
+          const cx = C.x + ((a.x + b.x) / 2 - C.x) * 0.35, cy = C.y + ((a.y + b.y) / 2 - C.y) * 0.35;
+          const mx = 0.25 * a.x + 0.5 * cx + 0.25 * b.x, my = 0.25 * a.y + 0.5 * cy + 0.25 * b.y;
+          return <g key={k}>
+            <path d={`M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`} fill="none" stroke={INK} strokeOpacity={0.25 + 0.6 * (n / maxE)} strokeWidth={1 + 5 * (n / maxE)} />
+            <text x={mx} y={my + 4} fontSize={10} textAnchor="middle" fill={INK} stroke="#fff" strokeWidth={3} paintOrder="stroke">{n}</text>
+          </g>;
+        })}
+        {nodes.map((c) => {
+          const p = pos.get(c.id)!, r = 4 + 12 * Math.sqrt((size.get(c.id) ?? 0) / maxN), right = Math.cos(p.a) >= 0;
+          const lx = C.x + (R + r + 8) * Math.cos(p.a), ly = C.y + (R + r + 8) * Math.sin(p.a);
+          return <g key={c.id}>
+            <circle cx={p.x} cy={p.y} r={r} fill={catOf(c.id)?.color ?? LOOSE} stroke="#fff" strokeWidth={1.5} />
+            <text x={lx} y={ly + 4} fontSize={11} textAnchor={Math.abs(Math.cos(p.a)) < 0.2 ? "middle" : right ? "start" : "end"} fill={INK}>{c.name.length > 24 ? c.name.slice(0, 23) + "…" : c.name} ({size.get(c.id)})</text>
+          </g>;
+        })}
+      </svg>
+    );
+    note = <>
+      {top && <b>Найчастіше разом: «{name(top[0].split("|")[0])}» і «{name(top[0].split("|")[1])}» — {top[1]} {top[1] % 10 === 1 && top[1] % 100 !== 11 ? "раз" : "рази"}.<br /></b>}
+      Коло — код (розмір — кількість фрагментів, у дужках; колір — категорія). Лінія — коди на тих самих словах; товщина й число — скільки разів. Фрагменти кількох людей на тих самих словах рахуються один раз.
+    </>;
+  }
+  if (tool === "tree") {
+    const frags = fragments(apps);
+    const weight = (id: string) => frags.filter((f) => f.code === id).length;
+    const lv = s.levels ?? LEVELS[props.method] ?? LEVELS[""];
+    const cats = s.cats.map((k) => ({ ...k, codes: s.codes.filter((c) => c.cat === k.id && weight(c.id)) })).filter((k) => k.codes.length);
+    const loose = s.codes.filter((c) => (!c.cat || !s.cats.some((k) => k.id === c.cat)) && weight(c.id));
+    const tops = [
+      ...s.supers.map((u) => ({ id: u.id, name: u.name, cats: cats.filter((k) => k.sup === u.id) })),
+      { id: "-", name: `Без рівня «${lv.top}»`, cats: cats.filter((k) => !k.sup || !s.supers.some((u) => u.id === k.sup)) },
+      ...(loose.length ? [{ id: "--", name: "Без категорії", cats: [{ id: "--", name: "мікрокоди без категорії", color: LOOSE, codes: loose }] }] : []),
+    ].filter((t) => t.cats.length);
+    const W = 820, H = 460;
+    const sum = (codes: Code[]) => codes.reduce((a, c) => a + weight(c.id), 0);
+    const tw = tops.map((t) => t.cats.reduce((a, k) => a + sum(k.codes), 0));
+    const inset = (r: Rect, top: number): Rect => ({ x: r.x + 3, y: r.y + top, w: Math.max(0, r.w - 6), h: Math.max(0, r.h - top - 3) });
+    const fit = (t: string, w: number) => (t.length * 6.2 > w ? t.slice(0, Math.max(0, Math.floor(w / 6.2) - 1)) + (w > 20 ? "…" : "") : t);
+    body = !tops.length ? null : (
+      <svg xmlns="http://www.w3.org/2000/svg" width={W} height={H} viewBox={`0 0 ${W} ${H}`} fontFamily={FONT} role="img" aria-label={toolName}>
+        <rect width={W} height={H} fill="#fff" />
+        {slice({ x: 0, y: 0, w: W, h: H }, tw).map((r, i) => {
+          const t = tops[i];
+          return <g key={t.id}>
+            <rect x={r.x + 1} y={r.y + 1} width={r.w - 2} height={r.h - 2} fill="none" stroke={INK} />
+            <text x={r.x + 6} y={r.y + 15} fontSize={12} fontWeight={600} fill={INK}>{fit(t.name, r.w - 12)}</text>
+            {slice(inset(r, 20), t.cats.map((k) => sum(k.codes))).map((q, j) => {
+              const k = t.cats[j];
+              return <g key={k.id}>
+                <rect x={q.x} y={q.y} width={q.w} height={q.h} fill={k.color} fillOpacity={0.12} stroke={k.color} />
+                {q.h > 16 && <text x={q.x + 4} y={q.y + 13} fontSize={11} fontWeight={600} fill={INK}>{fit(k.name, q.w - 8)}</text>}
+                {slice(inset(q, q.h > 34 ? 18 : 2), k.codes.map((c) => weight(c.id))).map((z, m) => (
+                  <g key={k.codes[m].id}>
+                    <rect x={z.x + 1} y={z.y + 1} width={Math.max(0, z.w - 2)} height={Math.max(0, z.h - 2)} fill={k.color} fillOpacity={0.35} />
+                    {z.h > 15 && z.w > 30 && <text x={z.x + 4} y={z.y + 13} fontSize={10} fill={INK}>{fit(`${k.codes[m].name} ${weight(k.codes[m].id)}`, z.w - 8)}</text>}
+                  </g>
+                ))}
+              </g>;
+            })}
+          </g>;
+        })}
+      </svg>
+    );
+    note = <>Площа — кількість фрагментів: великі блоки — {lv.top.toLowerCase()} (рівень 1), усередині — {lv.mid.toLowerCase()} (рівень 2) і мікрокоди з числом фрагментів. Назви, що не вмістилися, видно в матриці. Площа показує, скільки закодовано, а не наскільки тема важлива.</>;
+  }
+  if (tool === "strip") {
+    const frags = fragments(apps);
+    const len = (iv: string) => {
+      const reps = props.priv.originals[iv] ?? [];
+      const sec = Math.max(0, ...reps.map((r) => seconds(r.t) ?? 0));
+      return sec > 0 ? { sec: true, total: sec + 30 } : { sec: false, total: Math.max(1, reps.length) };
+    };
+    // Within a replica, the fragment's place in its text moves it towards the next replica's time.
+    const where = (iv: string, rep: number, at: number) => {
+      const l = len(iv), reps = props.priv.originals[iv] ?? [], r = reps[rep];
+      const k = r?.text.length ? Math.min(1, at / r.text.length) : 0;
+      if (!l.sec) return (rep + k) / l.total;
+      const t0 = seconds(r?.t ?? null) ?? 0, t1 = seconds(reps[rep + 1]?.t ?? null) ?? t0 + 30;
+      return (t0 + k * Math.max(0, t1 - t0)) / l.total;
+    };
+    const longest = Math.max(1, ...order.map((v) => len(v.id).total));
+    const LW = 150, SW = 600, RH = 46, W = LW + SW + 20, H = 20 + order.length * RH + 10;
+    const list = frags.map((f, i) => ({ f, i })).filter(({ f }) => order.some((v) => v.id === f.iv));
+    const pickedF = picked !== null ? frags[picked] : null;
+    body = (
+      <div className="stack" style={{ gap: 12 }}>
+        <svg xmlns="http://www.w3.org/2000/svg" width={W} height={H} viewBox={`0 0 ${W} ${H}`} fontFamily={FONT} role="img" aria-label={toolName}>
+          <rect width={W} height={H} fill="#fff" />
+          {order.map((v, k) => {
+            const y = 20 + k * RH + RH / 2, w = (len(v.id).total / longest) * SW;
+            return <g key={v.id}>
+              <text x={0} y={y + 4} fontSize={12} fill={INK}>{label(v)}</text>
+              <line x1={LW} x2={LW + w} y1={y} y2={y} stroke={LINE} strokeWidth={2} />
+              {list.filter(({ f }) => f.iv === v.id).map(({ f, i }) => ({ f, i, x: LW + where(v.id, f.rep, f.s) * w })).sort((a, b) => a.x - b.x).map(({ f, i, x }, n, all) => {
+                // Marks that would cover each other step up and down, so each stays clickable.
+                let lvl = 0;
+                for (let m = n - 1; m >= 0 && x - all[m].x < 6; m--) lvl++;
+                const dy = lvl === 0 ? 0 : (lvl % 2 ? -1 : 1) * Math.ceil(lvl / 2) * 13;
+                return <rect key={i} x={x - 3} y={y - 6 + dy} width={6} height={12} fill={catOf(f.code)?.color ?? LOOSE} stroke={picked === i ? INK : "none"} strokeWidth={2}
+                  tabIndex={0} role="button" aria-label={`${name(f.code)}, інтерв'ю ${pad(v.n)}`} style={{ cursor: "pointer" }}
+                  onClick={() => setPicked(i)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setPicked(i); }} />;
+              })}
+            </g>;
+          })}
+        </svg>
+        {pickedF && (() => {
+          const v = s.interviews.find((x) => x.id === pickedF.iv)!;
+          const r = props.priv.originals[pickedF.iv]?.[pickedF.rep];
+          const q = r ? quote(applyDict(r.text, props.priv.dict, pickedF.iv), pickedF.s, pickedF.e) : "";
+          return (
+            <div className="panel stack" style={{ gap: 6 }} role="region" aria-label="Фрагмент">
+              <span className="small">«{name(pickedF.code)}» · {label(v)}{r?.t ? ` · ${r.t}` : ""} · {[...pickedF.by].map((b) => initialsOf(s, b)).join(", ")}</span>
+              <p className="mono" style={{ margin: 0, fontSize: 14, lineHeight: 1.7 }}>«{q}»</p>
+              <button className="btn sm" style={{ alignSelf: "flex-start" }} onClick={() => props.goContext(pickedF.iv, pickedF.rep)}>Відкрити в транскрипті →</button>
+            </div>
+          );
+        })()}
+      </div>
+    );
+    note = <>Лінія — інтерв'ю на часі запису (без таймкодів — за порядком реплік); позначка — фрагмент, колір — категорія. Натисніть позначку, щоб побачити цитату.</>;
   }
   if (tool === "agreement") {
     const g = agreement(apps.filter(() => whose === "all"));

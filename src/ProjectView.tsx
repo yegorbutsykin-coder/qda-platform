@@ -710,7 +710,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
         <Share shared={shared} priv={priv} projectId={props.id} name={meta.name} method={meta.method} me={props.me}
           suspects={allSuspects.map((x) => x.word)} onBack={() => setView("main")} toDict={() => setView("dict")} />
       )}
-      {view === "analysis" && <Analysis shared={shared} me={me} onBack={() => setView("main")} />}
+      {view === "analysis" && meta && <Analysis shared={shared} priv={priv} method={meta.method} me={me} onBack={() => setView("main")} goContext={goContext} />}
       {view === "remarks" && (
         <RemarksView rows={remarkRows} me={me} who={who} set={setRemark} onBack={() => setView("main")} />
       )}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agreement, byPerson, codesByCategory, matrix, saturationCurve, saturationWords } from "./figures";
+import { agreement, byPerson, codesByCategory, cooccurrence, fragments, matrix, saturationCurve, saturationWords, slice } from "./figures";
 import type { App, Code } from "./coding";
 
 const A = (id: string, code: string, iv: string, s: number, e: number, by = "p1", rep = 0): App => ({ id, code, iv, rep, s, e, by, at: 0 });
@@ -27,5 +27,19 @@ describe("visual analysis numbers", () => {
     const r = byPerson([A("1", "a", "i", 0, 1, "p1"), A("2", "a", "i", 0, 1, "p2"), A("3", "b", "i", 0, 1, "p2")]);
     expect([...r.solo]).toEqual([["b", "p2"]]);
     expect(r.counts.get("p2")!.get("b")).toBe(1);
+  });
+});
+
+describe("connections", () => {
+  it("one fragment per code and place, whoever marked it", () => {
+    const f = fragments([A("1", "a", "i", 0, 10, "p1"), A("2", "a", "i", 5, 12, "p2"), A("3", "a", "i", 20, 25, "p1")]);
+    expect(f.map((x) => [x.s, x.e, [...x.by].sort()])).toEqual([[0, 12, ["p1", "p2"]], [20, 25, ["p1"]]]);
+  });
+  it("codes on overlapping words count once per meeting", () => {
+    const m = cooccurrence([A("1", "a", "i", 0, 10, "p1"), A("2", "a", "i", 2, 8, "p2"), A("3", "b", "i", 5, 15), A("4", "c", "i", 30, 40), A("5", "b", "i", 0, 9, "p1", 1), A("6", "a", "i", 0, 9, "p1", 1)]);
+    expect(Object.fromEntries(m)).toEqual({ "a|b": 2 });
+  });
+  it("slices a rectangle by weight along the longer side", () => {
+    expect(slice({ x: 0, y: 0, w: 100, h: 50 }, [1, 3])).toEqual([{ x: 0, y: 0, w: 25, h: 50 }, { x: 25, y: 0, w: 75, h: 50 }]);
   });
 });

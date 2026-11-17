@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countWords, journalChanged, resetJournal, sectionDef, sectionsOf, type Article } from "./article";
+import { countWords, formatQuote, insertAt, journalChanged, resetJournal, sectionDef, sectionsOf, type Article } from "./article";
 
 describe("article", () => {
   it("counts words like a journal: apostrophes and hyphens inside a word", () => {
@@ -30,5 +30,19 @@ describe("journal requirements", () => {
     expect(r.journal!.name).toBe("Журнал");
     expect(journalChanged(a)).toBe(true);
     expect(journalChanged(resetJournal({ ...a, texts: {} }))).toBe(false);
+  });
+});
+
+describe("quotes by APA 7", () => {
+  it("short in the line with the source; 40+ words as a block", () => {
+    expect(formatQuote("  Мені було   страшно. ", "Марта", 3, "uk")).toEqual({ text: "«Мені було страшно» (Марта, інтерв'ю 03).", block: false });
+    expect(formatQuote("I was scared.", "Marta", 12, "en").text).toBe("“I was scared” (Marta, Interview 12).");
+    expect(formatQuote("Чому я?", "Ліна", 2, "uk").text).toBe("«Чому я?» (Ліна, інтерв'ю 02)");
+    const long = Array(40).fill("слово").join(" ");
+    expect(formatQuote(long, "Ліна", 1, "uk")).toEqual({ text: `> ${long} (Ліна, інтерв'ю 01)`, block: true });
+  });
+  it("inserts with spaces, or as a paragraph of its own", () => {
+    expect(insertAt("Як сказала учасниця:", 20, { text: "«так»", block: false })).toEqual({ text: "Як сказала учасниця: «так»", pos: 26 });
+    expect(insertAt("Перший абзац. Далі.", 13, { text: "> довга цитата", block: true }).text).toBe("Перший абзац.\n\n> довга цитата\n\nДалі.");
   });
 });

@@ -1,8 +1,10 @@
-// Stage 5.1: the «Стаття» tab — title, sections by method with hints, word counts, supervisor remarks.
+// Stage 5: the «Стаття» tab — title, sections by method with hints, word counts, supervisor remarks, quotes from coding.
 import { useEffect, useRef, useState } from "react";
-import { countWords, journalChanged, METHODS, resetJournal, sectionsOf, totalLimit, type Article, type Journal, type Method, type SectionConf } from "./article";
-import { newId } from "./model";
-import type { Note } from "./model";
+import { countWords, formatQuote, insertAt, journalChanged, METHODS, resetJournal, sectionsOf, totalLimit, type Article, type Journal, type Method, type SectionConf } from "./article";
+import { initialsOf, newId, type Note, type Private, type Shared } from "./model";
+import { quote } from "./coding";
+import { codesByCategory, fragments, type Frag } from "./figures";
+import { applyDict } from "./text";
 import { Remark, type RemarkPatch } from "./Remarks";
 
 const grow = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } };
@@ -18,7 +20,7 @@ function Count(props: { n: number; limit?: number }) {
 }
 
 export default function ArticleView(props: {
-  article: Article; method: string; readOnly: boolean; supervisor: boolean; me: string;
+  article: Article; method: string; shared: Shared; priv: Private; readOnly: boolean; supervisor: boolean; me: string;
   notes: Record<string, Note>; who: (by: string) => string; focus: string | null;
   save: (a: Article) => void; addRemark: (sec: string, text: string, quote: string) => void; setRemark: (key: string, p: RemarkPatch) => void;
 }) {
@@ -28,6 +30,10 @@ export default function ArticleView(props: {
   const [writing, setWriting] = useState<string | null>(null); // section with an open remark form
   const [remark, setRemarkText] = useState("");
   const selection = useRef<Record<string, string>>({});
+  const caret = useRef<{ sec: string; pos: number } | null>(null); // where a quote goes
+  const [quotes, setQuotes] = useState(false);
+  const [qcode, setQcode] = useState<string | null>(null);
+  const [placed, setPlaced] = useState("");
   const pending = useRef(false), timer = useRef(0), latest = useRef(draft);
   latest.current = draft;
   const fmt: Method = draft.format ?? (METHODS.includes(props.method as Method) ? (props.method as Method) : "РТА");
@@ -43,6 +49,8 @@ export default function ArticleView(props: {
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(flush, 700);
   };
+  // Text put in by a quote, undo or a package doesn't fire onInput — fit the boxes to it too.
+  useEffect(() => document.querySelectorAll<HTMLTextAreaElement>("textarea.arttext").forEach(grow), [draft.texts]);
   useEffect(() => {
     if (props.focus) document.getElementById(`sec-${props.focus}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [props.focus]);
@@ -56,10 +64,29 @@ export default function ArticleView(props: {
   const setConf = (list: SectionConf[]) => setJ({ sections: list });
   const patchSec = (key: string, p: Partial<SectionConf>) => setConf(conf.map((c) => (c.key === key ? { ...c, ...p } : c)));
   const move = (i: number, d: number) => { const l = [...conf]; [l[i], l[i + d]] = [l[i + d], l[i]]; setConf(l); };
+  const lang = j.lang;
+  const ivOf = (id: string) => props.shared.interviews.find((x) => x.id === id);
+  // Quotes always come from the text with replacements, as colleagues see it.
+  const fragText = (f: Frag) => { const r = props.priv.originals[f.iv]?.[f.rep]; return r ? quote(applyDict(r.text, props.priv.dict, f.iv), f.s, f.e) : ""; };
+  const isVoice = (f: Frag) => props.priv.originals[f.iv]?.[f.rep]?.role !== "i";
+  const frags = qcode ? fragments(props.shared.apps.filter((a) => a.code === qcode))
+    .sort((a, b) => (ivOf(a.iv)?.n ?? 0) - (ivOf(b.iv)?.n ?? 0) || a.rep - b.rep || a.s - b.s) : [];
+  const insertQuote = (f: Frag) => {
+    const iv = ivOf(f.iv);
+    if (!iv) return;
+    const c = caret.current;
+    const k = c && secs.some((x) => x.key === c.sec) ? c.sec : (secs.find((x) => x.key === "results") ?? secs[secs.length - 1]).key;
+    const cur = draft.texts[k] ?? "";
+    const r = insertAt(cur, c?.sec === k ? Math.min(c.pos, cur.length) : cur.length, formatQuote(fragText(f), iv.card.pseudonym, iv.n, lang));
+    edit({ ...draft, texts: { ...draft.texts, [k]: r.text } });
+    caret.current = { sec: k, pos: r.pos };
+    setActive(k);
+    setPlaced(`Цитату вставлено в розділ «${secs.find((x) => x.key === k)?.name}».`);
+  };
   const remarksOf = (sec: string) => Object.entries(props.notes).filter(([k]) => k.startsWith(`art:${sec}:`));
 
   return (
-    <div className="article">
+    <div className={"article" + (quotes ? " withquotes" : "")}>
       <nav className="artnav" aria-label="Розділи статті">
         <span className="label">Розділи</span>
         {secs.map(({ key: k, ...d }) => {
@@ -133,6 +160,13 @@ export default function ArticleView(props: {
             </div>
           </div>
         )}
+        {!props.readOnly && (
+          <div className="row" style={{ gap: 10 }}>
+            <button className={"btn sm" + (quotes ? " primary" : "")} aria-expanded={quotes} onClick={() => setQuotes(!quotes)} disabled={!props.shared.apps.length}
+              title={props.shared.apps.length ? undefined : "Цитати з'являться, коли закодуєте хоча б один фрагмент"}>Цитати з кодування{quotes ? " ▸" : " ◂"}</button>
+            {quotes && <span className="small">Поставте курсор у тексті розділу й натисніть «Вставити» біля цитати. Без курсора цитата піде в кінець розділу «{(secs.find((x) => x.key === "results") ?? secs[secs.length - 1]).name}».</span>}
+          </div>
+        )}
         {props.readOnly && <div className="warnline" style={{ borderStyle: "solid" }}>Статтю пише власник(ця) проєкту.{props.supervisor ? " Виділіть речення й натисніть «+ Зауваження» під розділом." : ""}</div>}
         <input className="input arttitle" value={draft.title} readOnly={props.readOnly} placeholder="Назва статті" aria-label="Назва статті"
           onChange={(e) => edit({ ...draft, title: e.target.value })} />
@@ -149,7 +183,7 @@ export default function ArticleView(props: {
               <textarea className="input mono arttext" value={text} readOnly={props.readOnly} rows={3} aria-label={`Текст розділу «${d.name}»`}
                 ref={grow} onInput={(e) => grow(e.currentTarget)}
                 onFocus={() => setActive(k)} onBlur={flush}
-                onSelect={(e) => { const t = e.currentTarget; selection.current[k] = t.value.slice(t.selectionStart, t.selectionEnd).trim(); }}
+                onSelect={(e) => { const t = e.currentTarget; selection.current[k] = t.value.slice(t.selectionStart, t.selectionEnd).trim(); caret.current = { sec: k, pos: t.selectionEnd }; }}
                 onChange={(e) => edit({ ...draft, texts: { ...draft.texts, [k]: e.target.value } })} />
 
               {remarksOf(k).map(([key, n]) => (
@@ -174,8 +208,47 @@ export default function ArticleView(props: {
             </section>
           );
         })}
-        <p className="small">Список літератури з перевіркою за APA 7 з'явиться на етапі 6; цитати, рисунки й таблиця тем — на кроках 5.3–5.4; експорт у Word і PDF — 5.5.</p>
+        <p className="small">Список літератури з перевіркою за APA 7 з'явиться на етапі 6; рисунки й таблиця тем — на кроці 5.4; експорт у Word і PDF — 5.5.</p>
       </div>
+
+      {quotes && !props.readOnly && (
+        <aside className="quotes" aria-label="Цитати з кодування">
+          <div aria-live="polite" className="small accent">{placed}</div>
+          {!qcode ? codesByCategory(props.shared.codes.filter((c) => props.shared.apps.some((a) => a.code === c.id)), props.shared.cats).map((g) => (
+            <div key={g.cat?.id ?? "-"} className="stack" style={{ gap: 2 }}>
+              <span className="label">{g.cat?.name ?? "Без категорії"}</span>
+              {g.codes.map((c) => (
+                <button key={c.id} className="qcode" onClick={() => { setQcode(c.id); setPlaced(""); }}>
+                  <span className="sw" style={{ background: c.color }} aria-hidden="true" />
+                  <span className="grow">{c.name}</span>
+                  <span className="small mono">{fragments(props.shared.apps.filter((a) => a.code === c.id)).length}</span>
+                </button>
+              ))}
+            </div>
+          )) : (
+            <>
+              <button className="link" style={{ fontSize: 12, alignSelf: "flex-start" }} onClick={() => { setQcode(null); setPlaced(""); }}>← Усі коди</button>
+              <div className="row" style={{ gap: 8 }}>
+                <span className="sw" style={{ background: props.shared.codes.find((c) => c.id === qcode)?.color }} aria-hidden="true" />
+                <span style={{ fontWeight: 600 }}>{props.shared.codes.find((c) => c.id === qcode)?.name}</span>
+              </div>
+              {frags.map((f) => {
+                const iv = ivOf(f.iv), t = fragText(f), voice = isVoice(f);
+                if (!iv || !t) return null;
+                return (
+                  <div key={`${f.iv}|${f.rep}|${f.s}`} className="qfrag">
+                    <span className="small mono">{iv.card.pseudonym}, інтерв'ю {String(iv.n).padStart(2, "0")}{props.priv.originals[f.iv]?.[f.rep]?.t ? ` · ${props.priv.originals[f.iv][f.rep].t}` : ""} · {[...f.by].map((b) => initialsOf(props.shared, b)).join(", ")}</span>
+                    <p className="mono">«{t}»</p>
+                    {voice
+                      ? <button className="btn sm" style={{ alignSelf: "flex-start" }} onMouseDown={(e) => e.preventDefault()} onClick={() => insertQuote(f)}>↳ Вставити{countWords(t) >= 40 ? " блоком" : ""}</button>
+                      : <span className="small">Це слова дослідника(ці), не учасника(ці) — у статтю як цитату не вставляється.</span>}
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </aside>
+      )}
     </div>
   );
 }

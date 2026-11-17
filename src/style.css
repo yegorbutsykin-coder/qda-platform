@@ -312,6 +312,12 @@ textarea.edittext { resize: none; }
 
 /* stage 5: article */
 .article { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; align-items: start; }
+.article.withquotes { grid-template-columns: 200px minmax(0, 1fr) 340px; }
+.quotes { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; padding: 14px; background: var(--panel); border: 1px solid var(--line2); }
+.qcode { display: flex; gap: 8px; align-items: center; padding: 5px 6px; background: none; border: 0; text-align: left; font: inherit; font-size: 13px; color: var(--ink); cursor: pointer; }
+.qcode:hover, .qcode:focus-visible { background: var(--bg); }
+.qfrag { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line2); }
+.qfrag p { margin: 0; font-size: 13px; line-height: 1.7; }
 .artnav { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 12px; }
 .artlink { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border-left: 2px solid transparent; color: var(--ink); text-decoration: none; font-size: 13px; }
 .artlink.on { border-left-color: var(--accent); background: var(--panel); }

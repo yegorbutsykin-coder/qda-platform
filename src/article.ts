@@ -74,3 +74,26 @@ export function resetJournal(a: Article): Article {
 }
 
 export const journalChanged = (a: Article) => !!a.journal?.sections || (a.journal?.total !== undefined && a.journal.total !== TOTAL_LIMIT);
+
+/**
+ * A participant's words as APA 7 wants them: under 40 words in the line, in quotation marks, with the source;
+ * 40 and more — a block of its own (marked "> " here; indented in the exported Word), without quotation marks.
+ */
+export function formatQuote(text: string, pseudonym: string, n: number, lang: "uk" | "en"): { text: string; block: boolean } {
+  const t = text.trim().replace(/\s+/g, " ");
+  const src = lang === "en" ? `(${pseudonym}, Interview ${String(n).padStart(2, "0")})` : `(${pseudonym}, інтерв'ю ${String(n).padStart(2, "0")})`;
+  if (countWords(t) >= 40) return { text: `> ${t} ${src}`, block: true };
+  // APA: in the line the full stop moves after the source; ? and ! stay inside.
+  const dot = t.endsWith(".") && !t.endsWith("..."), q = dot ? t.slice(0, -1) : t;
+  return { text: (lang === "en" ? `“${q}” ${src}` : `«${q}» ${src}`) + (dot ? "." : ""), block: false };
+}
+
+/** Puts `piece` at `pos`: a block quote on lines of its own, an inline one with spaces as needed. */
+export function insertAt(text: string, pos: number, piece: { text: string; block: boolean }): { text: string; pos: number } {
+  const block = piece.block;
+  const before = block ? text.slice(0, pos).replace(/[ \t]+$/, "") : text.slice(0, pos), after = block ? text.slice(pos).replace(/^[ \t]+/, "") : text.slice(pos);
+  const ins = block
+    ? (before && !before.endsWith("\n\n") ? (before.endsWith("\n") ? "\n" : "\n\n") : "") + piece.text + (after.startsWith("\n") ? "\n" : "\n\n")
+    : (before && !/\s$/.test(before) ? " " : "") + piece.text + (after && !/^[\s.,;:!?)]/.test(after) ? " " : "");
+  return { text: before + ins + after, pos: before.length + ins.length };
+}

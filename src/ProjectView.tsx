@@ -737,7 +737,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
       {view === "article" && meta && (
         <div className="stack" style={{ gap: 12 }}>
           <button className="link" style={{ fontSize: 12, alignSelf: "flex-start" }} onClick={() => setView("main")}>← До транскриптів</button>
-          <ArticleView article={shared.article ?? emptyArticle()} method={meta.method} readOnly={!!copy} supervisor={copy?.kind === "supervisor"} me={me}
+          <ArticleView article={shared.article ?? emptyArticle()} method={meta.method} shared={shared} priv={priv} readOnly={!!copy} supervisor={copy?.kind === "supervisor"} me={me}
             notes={shared.notes} who={who} focus={artFocus} setRemark={setRemark}
             save={(article) => commit({ ...latest.current.shared, article }, latest.current.priv)}
             addRemark={(sec, text, q) => commit({ ...shared, notes: { ...shared.notes, [`art:${sec}:${newId()}`]: { text, by: me, at: Date.now(), status: "open", statusAt: Date.now(), ...(q ? { quote: q } : {}) } } }, priv)} />

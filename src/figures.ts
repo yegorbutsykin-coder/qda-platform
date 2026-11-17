@@ -85,7 +85,7 @@ export function saturationWords(curve: { fresh: string[] }[], names: string[], n
   return `Останні нові коди — в інтерв'ю ${names[last]}; після нього ${quiet} інтерв'ю без нових кодів (позначка — від ${n}).`;
 }
 
-type Frag = { code: string; iv: string; rep: number; s: number; e: number; by: Set<string>; apps: App[] };
+export type Frag = { code: string; iv: string; rep: number; s: number; e: number; by: Set<string>; apps: App[] };
 
 /** The same code on overlapping words, by anyone, is one fragment (so two coders do not count twice). */
 export function fragments(apps: App[]): Frag[] {

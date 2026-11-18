@@ -105,5 +105,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v=$(node -p "require('./package.json').version")
-          gh release view "v$v" >/dev/null 2>&1 || gh release create "v$v" --title "Платформа QDA $v" --notes-file .github/release-notes.md || true
+          gh release view "v$v" >/dev/null 2>&1 || gh release create "v$v" --title "Платформа QDA $v (бета)" --notes-file .github/release-notes.md || true
           gh release upload "v$v" ${{ matrix.bundle }} --clobber

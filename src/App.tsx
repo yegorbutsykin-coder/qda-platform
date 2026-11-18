@@ -225,7 +225,7 @@ export default function App() {
     <>
       <div className="app">
         <header className="bar">
-          <div className="brand"><span className="dot" aria-hidden="true" />QDA</div>
+          <div className="brand"><span className="dot" aria-hidden="true" />QDA <span className="beta" title="Бета-версія: програма робоча, але ще допрацьовується — робіть резервні копії">бета</span></div>
           {inApp && me && (
             <>
               <div className="grow" />

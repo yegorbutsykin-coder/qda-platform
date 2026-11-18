@@ -2,7 +2,7 @@
 //!
 //! Each profile has one random master key. It is stored twice, sealed:
 //! once with a key derived from the login password, once with a key derived
-//! from the 12-word recovery phrase. Project keys (step 1.2) are sealed with
+//! from the recovery phrase (12 words, or a phrase the person chose). Project keys (step 1.2) are sealed with
 //! the master key, so changing the password only re-seals the master key.
 
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -47,6 +47,9 @@ pub struct Owner {
     pub created: u64,
     key_by_password: Sealed,
     key_by_recovery: Sealed,
+    /// The recovery secret is a phrase the person chose, not the 12 words.
+    #[serde(default)]
+    pub recovery_own: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -59,6 +62,8 @@ pub struct Profile {
     pub autolock_min: u32,
     key_by_password: Sealed,
     key_by_recovery: Sealed,
+    #[serde(default)]
+    pub recovery_own: bool,
     pub failed: u32,
     pub locked_until: u64,
     /// The person's list of projects, encrypted with the master key.
@@ -170,9 +175,28 @@ impl Owner {
     }
 
     pub fn unlock_with_recovery(&self, phrase: &str) -> Result<Key, RecoveryError> {
+        let aad = format!("qda:{}:recovery", self.id);
+        if self.recovery_own {
+            let own = own_phrase(phrase);
+            if own.is_empty() {
+                return Err(RecoveryError::BadWords);
+            }
+            return open(own.as_bytes(), &aad, &self.key_by_recovery).ok_or(RecoveryError::WrongKey);
+        }
         let entropy = phrase_entropy(phrase)?;
-        open(&entropy, &format!("qda:{}:recovery", self.id), &self.key_by_recovery).ok_or(RecoveryError::WrongKey)
+        open(&entropy, &aad, &self.key_by_recovery).ok_or(RecoveryError::WrongKey)
     }
+}
+
+/// A phrase a person chose, as it is compared: capitals and extra spaces do not matter.
+pub fn own_phrase(p: &str) -> String {
+    p.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// A chosen phrase must be at least as long as a password (the slow key derivation does the rest).
+pub fn check_own_phrase(p: &str) -> Result<String, String> {
+    let own = own_phrase(p);
+    if own.chars().count() < MIN_PASSWORD_CHARS { Err("short_phrase".into()) } else { Ok(own) }
 }
 
 impl Profile {
@@ -184,6 +208,7 @@ impl Profile {
             v: 1,
             key_by_password: seal(password.as_bytes(), &format!("qda:{id}:password"), master.as_ref()),
             key_by_recovery: seal(entropy.as_ref(), &format!("qda:{id}:recovery"), master.as_ref()),
+            recovery_own: false,
             id,
             name,
             initials,
@@ -204,6 +229,7 @@ impl Profile {
             created: self.created,
             key_by_password: self.key_by_password.clone(),
             key_by_recovery: self.key_by_recovery.clone(),
+            recovery_own: self.recovery_own,
         }
     }
 
@@ -218,6 +244,7 @@ impl Profile {
             autolock_min: 15,
             key_by_password: o.key_by_password.clone(),
             key_by_recovery: o.key_by_recovery.clone(),
+            recovery_own: o.recovery_own,
             failed: 0,
             locked_until: 0,
             projects: None,
@@ -230,6 +257,15 @@ impl Profile {
 
     pub fn unlock_with_recovery(&self, phrase: &str) -> Result<Key, RecoveryError> {
         self.owner().unlock_with_recovery(phrase)
+    }
+
+    /// Replaces the recovery secret with a phrase the person chose. The old 12 words stop opening this
+    /// profile (copies and project files saved earlier still carry the old key until they are saved again).
+    pub fn set_own_recovery(&mut self, master: &Key, phrase: &str) -> Result<(), String> {
+        let own = check_own_phrase(phrase)?;
+        self.key_by_recovery = seal(own.as_bytes(), &format!("qda:{}:recovery", self.id), master.as_ref());
+        self.recovery_own = true;
+        Ok(())
     }
 
     pub fn set_password(&mut self, master: &Key, password: &str) {
@@ -321,6 +357,24 @@ mod tests {
         assert!(p.unlock_with_recovery(&swapped.join(" ")).is_err());
         let (_, _, other) = make();
         assert_eq!(p.unlock_with_recovery(&other.join(" ")).unwrap_err(), RecoveryError::WrongKey);
+    }
+
+    #[test]
+    fn own_recovery_phrase() {
+        let (mut p, master, words) = make();
+        assert_eq!(p.set_own_recovery(&master, "коротка"), Err("short_phrase".into()));
+        p.set_own_recovery(&master, "Мій  Кіт Мурчик 2019").unwrap();
+        assert!(p.recovery_own && p.owner().recovery_own);
+        // Capitals and spaces do not matter; the words no longer open the profile.
+        assert_eq!(*p.unlock_with_recovery("  мій кіт   мурчик 2019 ").unwrap(), *master);
+        assert_eq!(p.unlock_with_recovery("мій кіт мурчик 2020").unwrap_err(), RecoveryError::WrongKey);
+        assert!(p.unlock_with_recovery(&words.join(" ")).is_err());
+        assert_eq!(p.unlock_with_recovery("   ").unwrap_err(), RecoveryError::BadWords);
+        // The flag travels inside project files: a profile rebuilt from them still uses the phrase.
+        assert_eq!(*Profile::from_owner(&p.owner()).unlock_with_recovery("мій кіт мурчик 2019").unwrap(), *master);
+        // Profiles saved before this change have no flag and keep their 12 words.
+        let old: Profile = serde_json::from_str(&serde_json::to_string(&make().0).unwrap().replace(",\"recovery_own\":false", "")).unwrap();
+        assert!(!old.recovery_own);
     }
 
     #[test]

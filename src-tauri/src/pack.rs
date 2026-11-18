@@ -1,5 +1,5 @@
 //! Exchange packages (stage 3): a project's shared part, or someone's changes, in one file
-//! that opens only with a one-time phrase of 6 words, passed separately from the file.
+//! that opens only with a one-time phrase of 6 words — or a phrase the sender chose — passed separately from the file.
 
 use crate::vault::{self, Blob, Sealed};
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,9 @@ struct PackFile {
     /// The package key, locked by the phrase (Argon2id: guessing is slow).
     key: Sealed,
     body: Blob,
+    /// Locked with a phrase the sender chose, not the 6 words.
+    #[serde(default)]
+    own: bool,
 }
 
 fn aad(id: &str) -> String {
@@ -48,19 +51,23 @@ pub fn normalize(phrase: &str) -> Result<String, usize> {
     Ok(words.join(" "))
 }
 
-/// Writes `body` locked with a new phrase and returns the phrase. The file appears only when complete.
-pub fn write(path: &Path, body: &serde_json::Value) -> Result<Vec<String>, String> {
+/// Writes `body` locked with new 6 words (returned) or with the sender's own phrase (then nothing is returned).
+/// The file appears only when complete.
+pub fn write(path: &Path, body: &serde_json::Value, own: Option<&str>) -> Result<Vec<String>, String> {
     if path.extension().and_then(|e| e.to_str()) != Some("qdapack") {
         return Err("bad_input".into());
     }
-    let words = new_words();
+    let own = own.map(vault::check_own_phrase).transpose()?;
+    let words = if own.is_some() { Vec::new() } else { new_words() };
+    let secret = own.clone().unwrap_or_else(|| words.join(" "));
     let id = vault::new_id();
     let key = vault::new_key();
     let file = PackFile {
         format: FORMAT.into(),
         v: 1,
-        key: vault::seal(words.join(" ").as_bytes(), &aad(&id), key.as_ref()),
+        key: vault::seal(secret.as_bytes(), &aad(&id), key.as_ref()),
         body: vault::lock(&key, &aad(&id), &serde_json::to_vec(body).map_err(|e| e.to_string())?),
+        own: own.is_some(),
         id,
     };
     let tmp = path.with_extension("qdapack.part");
@@ -82,7 +89,7 @@ pub fn read(path: &Path, phrase: &str) -> Result<serde_json::Value, String> {
     if file.format != FORMAT || file.v != 1 {
         return Err("not_a_pack".into());
     }
-    let phrase = normalize(phrase).map_err(|n| format!("bad_words:{n}"))?;
+    let phrase = if file.own { vault::own_phrase(phrase) } else { normalize(phrase).map_err(|n| format!("bad_words:{n}"))? };
     let key = vault::open(phrase.as_bytes(), &aad(&file.id), &file.key).ok_or("wrong")?;
     let body = vault::unlock(&key, &aad(&file.id), &file.body).ok_or("wrong")?;
     serde_json::from_slice(&body).map_err(|_| "not_a_pack".into())
@@ -93,10 +100,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn own_phrase_package() {
+        let path = std::env::temp_dir().join(format!("qda-own-{}.qdapack", std::process::id()));
+        let body = serde_json::json!({"kind": "copy"});
+        assert_eq!(write(&path, &body, Some("коротко")).unwrap_err(), "short_phrase");
+        assert!(write(&path, &body, Some("Побратимство  2026")).unwrap().is_empty());
+        assert_eq!(read(&path, "побратимство 2026").unwrap(), body); // capitals and spaces do not matter
+        assert_eq!(read(&path, "побратимство 2025").unwrap_err(), "wrong");
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
     fn round_trip_and_wrong_phrase() {
         let path = std::env::temp_dir().join(format!("qda-test-{}.qdapack", std::process::id()));
         let body = serde_json::json!({"kind": "copy", "data": {"name": "Досвід втрати"}});
-        let words = write(&path, &body).unwrap();
+        let words = write(&path, &body, None).unwrap();
         assert_eq!(words.len(), 6);
         // Case and extra spaces do not matter.
         let typed = format!("  {}  ", words.join("   ").to_uppercase());
@@ -107,7 +125,7 @@ mod tests {
         assert_eq!(read(&path, "one two").unwrap_err(), "bad_words:0");
         assert_eq!(read(&path, &format!("{} qqq", words[..5].join(" "))).unwrap_err(), "bad_words:6");
         fs::remove_file(&path).unwrap();
-        assert!(write(Path::new("/tmp/x.qda"), &body).is_err());
+        assert!(write(Path::new("/tmp/x.qda"), &body, None).is_err());
     }
 
     #[test]

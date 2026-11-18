@@ -44,11 +44,13 @@ struct ProfileInfo {
     name: String,
     initials: String,
     autolock_min: u32,
+    /// Recovery by a phrase the person chose (else by the 12 words).
+    recovery_own: bool,
 }
 
 impl From<&Profile> for ProfileInfo {
     fn from(p: &Profile) -> Self {
-        ProfileInfo { id: p.id.clone(), name: p.name.clone(), initials: p.initials.clone(), autolock_min: p.autolock_min }
+        ProfileInfo { id: p.id.clone(), name: p.name.clone(), initials: p.initials.clone(), autolock_min: p.autolock_min, recovery_own: p.recovery_own }
     }
 }
 
@@ -133,6 +135,37 @@ fn confirm_profile(app: AppHandle, state: State<'_, AppState>, answers: Vec<Stri
     let p = pending.take().unwrap();
     vault::save(&dir(&app)?, &p.profile).map_err(io)?;
     Ok(start_session(&state, &p.profile, p.master))
+}
+
+/// The person chose their own recovery phrase instead of the 12 words: it must differ from the password.
+#[tauri::command]
+async fn confirm_profile_own(app: AppHandle, state: State<'_, AppState>, phrase: String) -> Res<ProfileInfo> {
+    let mut p = state.pending.lock().unwrap().take().ok_or("no_pending")?;
+    if p.profile.unlock(&vault::own_phrase(&phrase)).is_some() || p.profile.unlock(phrase.trim()).is_some() {
+        *state.pending.lock().unwrap() = Some(p);
+        return Err("same_as_password".into());
+    }
+    if let Err(e) = p.profile.set_own_recovery(&p.master, &phrase) {
+        *state.pending.lock().unwrap() = Some(p);
+        return Err(e);
+    }
+    vault::save(&dir(&app)?, &p.profile).map_err(io)?;
+    Ok(start_session(&state, &p.profile, p.master))
+}
+
+/// From the profile panel: a phrase of one's own instead of the 12 words; needs the password.
+#[tauri::command]
+async fn set_own_recovery(app: AppHandle, state: State<'_, AppState>, password: String, phrase: String) -> Res<ProfileInfo> {
+    let id = state.session.lock().unwrap().as_ref().map(|s| s.id.clone()).ok_or("locked")?;
+    let d = dir(&app)?;
+    let mut p = vault::load(&d, &id).map_err(io)?;
+    let master = p.unlock(&password).ok_or("wrong")?;
+    if p.unlock(&vault::own_phrase(&phrase)).is_some() || p.unlock(phrase.trim()).is_some() {
+        return Err("same_as_password".into());
+    }
+    p.set_own_recovery(&master, &phrase)?;
+    vault::save(&d, &p).map_err(io)?;
+    Ok(ProfileInfo::from(&p))
 }
 
 #[tauri::command]
@@ -646,9 +679,9 @@ fn logged_in(state: &AppState) -> Res<()> {
 
 /// Writes a package (built by the window from the shared part only) and returns its 6 words.
 #[tauri::command]
-async fn make_pack(state: State<'_, AppState>, path: String, body: serde_json::Value) -> Res<Vec<String>> {
+async fn make_pack(state: State<'_, AppState>, path: String, body: serde_json::Value, phrase: Option<String>) -> Res<Vec<String>> {
     logged_in(&state)?;
-    pack::write(std::path::Path::new(&path), &body)
+    pack::write(std::path::Path::new(&path), &body, phrase.as_deref())
 }
 
 #[tauri::command]
@@ -796,6 +829,8 @@ fn main() {
             cancel_profile,
             unlock,
             check_recovery,
+            confirm_profile_own,
+            set_own_recovery,
             recover,
             change_password,
             set_autolock,

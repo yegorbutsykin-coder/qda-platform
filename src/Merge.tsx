@@ -6,9 +6,9 @@ import type { Private, Shared } from "./model";
 
 const said = (e: unknown) => {
   const s = String(e);
-  if (s === "wrong") return "Фраза не підходить до цього файлу. Перевірте слова.";
+  if (s === "wrong") return "Фраза не підходить до цього файлу. Перевірте написання.";
   if (s === "not_a_pack") return "Цей файл не є пакетом Платформи QDA або пошкоджений.";
-  if (s === "bad_words:0") return "Фраза — це рівно 6 слів, через пробіл.";
+  if (s === "bad_words:0") return "Цей пакет замкнено 6 словами: впишіть рівно 6 слів через пробіл.";
   if (s.startsWith("bad_words:")) return `Слова № ${s.slice(10)} немає у списку — перевірте написання.`;
   return s;
 };
@@ -42,12 +42,12 @@ export function PackPicker(props: { title: string; onBack: () => void; use: (bod
         <button className="btn sm quiet" disabled={busy} onClick={pick}>{file ? "Обрати інший файл…" : "Обрати файл…"}</button>
       </div>
       <form className="stack" style={{ gap: 10 }} onSubmit={(e) => { e.preventDefault(); read(); }}>
-        <label className="stack" style={{ gap: 4, fontSize: 13 }}>Фраза з 6 слів, яку вам передали окремо від файлу
+        <label className="stack" style={{ gap: 4, fontSize: 13 }}>Фраза чи кодове слово, які вам передали окремо від файлу
           <input className="input mono" value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} />
         </label>
         {error && <span className="bad" role="alert">{error}</span>}
         <div className="row" style={{ gap: 10 }}>
-          <button className="btn primary" type="submit" disabled={busy || !file || phrase.trim().split(/\s+/).length !== 6}>{busy ? "Відкриваю…" : "Відкрити"}</button>
+          <button className="btn primary" type="submit" disabled={busy || !file || !phrase.trim()}>{busy ? "Відкриваю…" : "Відкрити"}</button>
           <button className="btn quiet" type="button" onClick={props.onBack}>Скасувати</button>
         </div>
       </form>

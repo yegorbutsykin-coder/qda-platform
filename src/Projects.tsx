@@ -37,15 +37,15 @@ function message(e: unknown): string {
   const known: Record<string, string> = {
     not_a_project: "Цей файл не є проєктом Платформи QDA або пошкоджений.",
     wrong: "Не підходить. Перевірте й спробуйте ще раз.",
-    bad_words: "Це не схоже на 12 слів ключа: перевірте написання кожного слова.",
-    wrong_key: "Ці 12 слів не підходять до профілю, якому належить копія.",
+    bad_words: "Це не схоже на ключ відновлення: перевірте написання.",
+    wrong_key: "Цей ключ відновлення не підходить до профілю, якому належить копія.",
     half_mismatch: "Цей файл половини ключа належить іншому проєкту.",
     already_in_list: "Цей проєкт уже є у списку.",
     backup_unreadable: "Копію записано, але вона не відкривається. Спробуйте зберегти в інше місце.",
     bad_input: "Перевірте заповнені поля.",
     not_a_pack: "Цей файл не є пакетом Платформи QDA або пошкоджений.",
   };
-  if (s === "bad_words:0") return "Фраза — це рівно 6 слів, через пробіл.";
+  if (s === "bad_words:0") return "Цей пакет замкнено 6 словами: впишіть рівно 6 слів через пробіл.";
   if (s.startsWith("bad_words:")) return `Слова № ${s.slice(10)} немає у списку — перевірте написання.`;
   if (s.startsWith("missing:")) return `Файл проєкту не знайдено: ${s.slice(8)}. Можливо, його перемістили чи видалили; відкрийте резервну копію.`;
   if (s.startsWith("trash:")) return `Не вдалося перенести файл у Кошик: ${s.slice(6)}`;
@@ -436,12 +436,12 @@ export default function Projects(props: { me: Person & { id: string }; aside: Re
           </div>
           {!pack ? (
             <form className="stack" style={{ gap: 10 }} onSubmit={submit(openPack)}>
-              <label className="stack" style={{ gap: 4, fontSize: 13 }}>Фраза з 6 слів, яку вам передали окремо від файлу
-                <input className="input mono" value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="six words like this one here" />
+              <label className="stack" style={{ gap: 4, fontSize: 13 }}>Фраза чи кодове слово, які вам передали окремо від файлу
+                <input className="input mono" value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} />
               </label>
               {errorLine}
               <div className="row" style={{ gap: 10 }}>
-                <button className="btn primary" type="submit" disabled={busy || !packFile || phrase.trim().split(/\s+/).length !== 6}>{busy ? "Відкриваю…" : "Відкрити"}</button>
+                <button className="btn primary" type="submit" disabled={busy || !packFile || !phrase.trim()}>{busy ? "Відкриваю…" : "Відкрити"}</button>
                 <button className="btn quiet" type="button" onClick={() => go("list")}>Скасувати</button>
               </div>
             </form>
@@ -498,14 +498,14 @@ export default function Projects(props: { me: Person & { id: string }; aside: Re
                 <span className="lead">
                   {info.owner_here
                     ? `Щоб працювати з цим проєктом, увійдіть як «${info.owner_name}».${info.has_halves ? " Якщо пароль і ключ того профілю втрачено, студентський проєкт можна відкрити двома половинами ключа — тоді він перейде до вашого профілю." : ""}`
-                    : "Так буває після переходу на новий комп'ютер. Якщо це ваш профіль, введіть його пароль або 12 слів ключа відновлення — програма відновить і профіль, і проєкт. Чужу копію без цього відкрити неможливо."}
+                    : "Так буває після переходу на новий комп'ютер. Якщо це ваш профіль, введіть його пароль або ключ відновлення (12 слів чи власну фразу) — програма відновить і профіль, і проєкт. Чужу копію без цього відкрити неможливо."}
                 </span>
               </div>
               {!(info.owner_here && !info.has_halves) && (
                 <>
                   <div className="seg" role="group" aria-label="Чим відкрити">
                     {!info.owner_here && <button type="button" aria-pressed={way === "password"} onClick={() => { setWay("password"); setSecret(""); }}>Пароль профілю</button>}
-                    {!info.owner_here && <button type="button" aria-pressed={way === "words"} onClick={() => { setWay("words"); setSecret(""); }}>12 слів ключа профілю</button>}
+                    {!info.owner_here && <button type="button" aria-pressed={way === "words"} onClick={() => { setWay("words"); setSecret(""); }}>Ключ відновлення профілю</button>}
                     {info.has_halves && <button type="button" aria-pressed={way === "halves"} onClick={() => { setWay("halves"); setSecret(""); }}>Дві половини ключа проєкту</button>}
                   </div>
                   {way === "password" && (
@@ -513,7 +513,7 @@ export default function Projects(props: { me: Person & { id: string }; aside: Re
                       <input className="input" type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
                   )}
                   {way === "words" && (
-                    <label className="field"><span>12 слів ключа відновлення профілю</span>
+                    <label className="field"><span>Ключ відновлення профілю — 12 слів або ваша власна фраза</span>
                       <textarea className="input mono" rows={2} spellCheck={false} value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
                   )}
                   {way === "halves" && (

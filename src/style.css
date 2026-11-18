@@ -176,7 +176,11 @@ mark.suspect { background: transparent; border-bottom: 2px dashed var(--accent);
 .x { flex: 0 0 auto; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 3px; background: transparent; font-size: 11px; line-height: 1; }
 .sw { width: 12px; height: 12px; flex: 0 0 auto; border-radius: 2px; }
 .sw.lg { width: 18px; height: 18px; }
-.coderow { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 8px; border: 0; border-radius: 3px; background: transparent; text-align: left; font-size: 13px; width: 100%; }
+/* Long code names wrap onto more lines; the row grows instead of running into the next one. */
+.coderow { display: flex; align-items: flex-start; gap: 10px; min-height: 34px; height: auto; flex: none; padding: 8px; border: 0; border-radius: 3px; background: transparent; text-align: left; font-size: 13px; line-height: 1.35; width: 100%; }
+.coderow .sw { margin-top: 3px; flex: none; }
+.coderow .grow { min-width: 0; overflow-wrap: anywhere; }
+.coderow .mono { flex: none; margin-top: 1px; }
 .coderow:hover, .coderow.on { background: var(--bar); }
 .coderow.on { font-weight: 600; }
 .link.danger { color: #B3401A; font-size: 12px; min-height: 0; }
@@ -187,7 +191,7 @@ mark.suspect { background: transparent; border-bottom: 2px dashed var(--accent);
 .codebook { position: fixed; z-index: 30; overflow: visible; display: flex; flex-direction: column; background: #FFFFFF; border: 1px solid var(--ink); border-radius: 3px; box-shadow: 0 10px 30px rgba(30,30,28,0.14); }
 .cbhead { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line3); background: var(--bar); cursor: grab; user-select: none; touch-action: none; }
 .cbbody { flex: 1 1 auto; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
-.cbcard { margin-top: 8px; padding: 10px; border-top: 1px solid var(--line3); display: flex; flex-direction: column; gap: 8px; }
+.cbcard { margin: 2px 0 8px; padding: 10px; border-top: 1px solid var(--line3); border-bottom: 1px solid var(--line3); display: flex; flex-direction: column; gap: 8px; }
 .cbchip { position: fixed; z-index: 30; min-height: 36px; padding: 0 14px; border: 1px solid var(--ink); border-radius: 3px; background: var(--ink); color: var(--bar); font-size: 12px; font-weight: 500; box-shadow: 0 6px 18px rgba(30,30,28,0.18); cursor: grab; touch-action: none; }
 .swpick { position: relative; width: 24px; height: 24px; flex: 0 0 auto; border-radius: 3px; cursor: pointer; }
 .swpick input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: 0; padding: 0; }

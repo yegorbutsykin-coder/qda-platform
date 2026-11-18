@@ -19,7 +19,7 @@ export type PackBody = {
 
 const stem = (s: string) => s.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").trim().slice(0, 80) || "Проєкт";
 
-/** «Поділитися…»: a copy for a colleague or a package for the supervisor, locked by 6 words. */
+/** «Поділитися…»: a copy for a colleague or a package for the supervisor, locked by 6 words or the sender's own phrase. */
 export default function Share(props: {
   shared: Shared; priv: Private; projectId: string; name: string; method: string; me: Person & { id: string };
   suspects: string[]; onBack: () => void; toDict: () => void;
@@ -32,10 +32,35 @@ export default function Share(props: {
   const [file, setFile] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [own, setOwn] = useState(false); // the sender's own phrase instead of 6 random words
+  const [own1, setOwn1] = useState(""), [own2, setOwn2] = useState("");
+  const ownOk = [...own1.trim()].length >= 10 && own1 === own2;
   const s = props.shared;
   const transcribing = s.interviews.filter((x) => x.tx).length;
 
   const back = copy ? buildReturn(s, props.priv, props.me) : null;
+  const lockChoice = (
+      <div className="stack" style={{ gap: 8 }}>
+      <span style={{ fontSize: 13 }}>Чим замкнути пакет</span>
+      <div className="seg" role="group" aria-label="Чим замкнути пакет">
+        <button type="button" aria-pressed={!own} onClick={() => setOwn(false)}>6 випадкових слів (надійніше)</button>
+        <button type="button" aria-pressed={own} onClick={() => setOwn(true)}>Своє кодове слово чи фраза</button>
+      </div>
+      {!own ? <span className="small">Програма покаже 6 слів після збереження файлу.</span> : (
+        <>
+          <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
+            <label className="field" style={{ flex: "1 1 220px" }}><span>Кодове слово чи фраза</span>
+              <input className="input" type="password" autoComplete="new-password" value={own1} onChange={(e) => setOwn1(e.target.value)} />
+              <span className={[...own1.trim()].length >= 10 ? "ok" : "small"} aria-live="polite">{[...own1.trim()].length >= 10 ? "✓ Достатньо довга" : `Щонайменше 10 символів · зараз ${[...own1.trim()].length}`}</span></label>
+            <label className="field" style={{ flex: "1 1 220px" }}><span>Ще раз</span>
+              <input className="input" type="password" autoComplete="new-password" value={own2} onChange={(e) => setOwn2(e.target.value)} />
+              <span className={own2 && own1 !== own2 ? "bad" : "ok"} aria-live="polite">{!own2 ? "" : own1 === own2 ? "✓ Збігаються" : "Не збігаються"}</span></label>
+          </div>
+          <span className="small">Файл із даними дослідження може потрапити до чужих рук разом із листом, тож одне слово чи ім'я легко вгадати. Краще кілька слів, відомих лише вам двом. Великі літери й зайві пробіли не враховуються.</span>
+        </>
+      )}
+    </div>
+  );
 
   async function make() {
     setError("");
@@ -61,11 +86,23 @@ export default function Share(props: {
     };
     try {
       const p = path.toLowerCase().endsWith(".qdapack") ? path : path + ".qdapack";
-      setWords(await invoke<string[]>("make_pack", { path: p, body: back ?? body }));
+      setWords(await invoke<string[]>("make_pack", { path: p, body: back ?? body, phrase: own ? own1 : null }));
+      setOwn1(""); setOwn2("");
       setFile(p.split(/[\\/]/).pop() ?? p);
     } catch (e) {
       setError(`Не вдалося створити пакет: ${e}`);
     }
+  }
+
+  if (words && !words.length) {
+    return (
+      <section className="card wide stack" style={{ gap: 16 }} aria-label="Пакет створено">
+        <h2 style={{ margin: 0 }}>Пакет створено</h2>
+        <span className="lead">Файл <span className="mono">{file}</span> відкривається лише вашим кодовим словом чи фразою. Повідомте їх одержувачу(ці) <b>окремо від файлу</b>: дзвінком чи в месенджері, не в тому самому листі.</span>
+        <span className="small">Програма фразу не зберігає. Забули — просто створіть пакет ще раз.</span>
+        <button className="btn primary" style={{ alignSelf: "flex-start" }} onClick={props.onBack}>Готово</button>
+      </section>
+    );
   }
 
   if (words) {
@@ -95,9 +132,10 @@ export default function Share(props: {
           <span className="small">Власник(ця) додасть зміни до свого проєкту й сам(а) вирішить, чи брати нові назви кодів. Надсилати можна скільки завгодно разів: щоразу йде все ваше кодування, нічого не подвоюється.</span>
         </div>
         {!back.apps.length && !back.notes.length && <span className="small">Ви ще нічого не закодували й не прокоментували.</span>}
+        {lockChoice}
         {error && <span className="bad" role="alert">{error}</span>}
         <div className="row" style={{ gap: 10 }}>
-          <button className="btn primary" onClick={make}>Створити пакет змін…</button>
+          <button className="btn primary" onClick={make} disabled={own && !ownOk}>Створити пакет змін…</button>
           <button className="btn quiet" onClick={props.onBack}>Скасувати</button>
         </div>
       </section>
@@ -131,10 +169,10 @@ export default function Share(props: {
         <div className="warnline">У транскриптах ще є слова, схожі на імена: {props.suspects.slice(0, 8).map((w) => `«${w}»`).join(", ")}{props.suspects.length > 8 ? "…" : ""}. Колега побачить їх як є.{" "}
           <button className="link" style={{ fontSize: 12, minHeight: 0 }} onClick={props.toDict}>Перевірити словник замін →</button></div>
       )}
-      <span className="small">Пакет замикається одноразовою фразою з 6 слів — програма покаже її після збереження файлу.</span>
+      {lockChoice}
       {error && <span className="bad" role="alert">{error}</span>}
       <div className="row" style={{ gap: 10 }}>
-        <button className="btn primary" onClick={make}>Створити пакет…</button>
+        <button className="btn primary" onClick={make} disabled={own && !ownOk}>Створити пакет…</button>
         <button className="btn quiet" onClick={props.onBack}>Скасувати</button>
       </div>
     </section>

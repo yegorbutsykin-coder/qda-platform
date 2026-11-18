@@ -656,6 +656,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
                       : <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={() => setEditing(true)}>Редагувати текст</button>)}
                     {!iv.tx && <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={exportWord}>Експорт у Word</button>}
                     {!copy && <button className="link" style={{ fontSize: 12, minHeight: 28 }} onClick={editCard}>Змінити картку</button>}
+                    {!copy && <button className="link danger" style={{ fontSize: 12, minHeight: 28 }} onClick={removeInterview}>Видалити інтерв'ю</button>}
                   </div>
                   <div className="row" style={{ gap: "8px 16px" }}>
                     {copy ? <span className="small grow">Текст із замінами — оригіналу в копії немає.</span> : (
@@ -910,7 +911,9 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
         <section className="stack" style={{ gap: 14, maxWidth: 920 }} aria-label={`Фрагменти коду ${fragCode.name}`}>
           <div className="row">
             <span className="sw lg" style={{ background: fragCode.color }} aria-hidden="true" />
-            <span className="title grow">{fragCode.name}</span>
+            <input key={fragCode.id + fragCode.name} className="input title grow" style={{ fontSize: 18, fontWeight: 600 }} defaultValue={fragCode.name} aria-label="Назва коду — змінити"
+              title="Змініть назву й натисніть Enter" onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== fragCode.name) patchCode(fragCode.id, { name: v }); else e.target.value = fragCode.name; }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { (e.target as HTMLInputElement).value = fragCode.name; (e.target as HTMLInputElement).blur(); } }} />
             <button className="btn sm" onClick={() => setView("main")}>← До транскрипту</button>
           </div>
           {fragCode.note && <div className="panel"><span className="label">Попередня інтерпретація</span><p className="mono" style={{ fontSize: 13, lineHeight: 1.7 }}>{fragCode.note}</p></div>}

@@ -2,10 +2,10 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { invoke } from "@tauri-apps/api/core";
 import Projects from "./Projects";
 
-type Profile = { id: string; name: string; initials: string; autolock_min: number };
+type Profile = { id: string; name: string; initials: string; autolock_min: number; recovery_own?: boolean };
 type Screen =
   | "loading" | "welcome" | "you" | "pass" | "key" | "keycheck" | "disk"
-  | "login" | "recover" | "recoverPass" | "locked" | "projects" | "changePass" | "deleteProfile";
+  | "login" | "recover" | "recoverPass" | "locked" | "projects" | "changePass" | "deleteProfile" | "ownRecovery";
 
 const MIN = 10;
 const SETUP_STEPS = ["1 · Ви", "2 · Пароль", "3 · Ключ відновлення", "4 · Захист диска"];
@@ -15,8 +15,9 @@ const err = (e: unknown) => String(e);
 const initialsOf = (name: string) =>
   name.trim().split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 3).toUpperCase();
 
-function PasswordPair(props: { a: string; b: string; setA: (v: string) => void; setB: (v: string) => void; labelA?: string; labelB?: string }) {
+function PasswordPair(props: { a: string; b: string; setA: (v: string) => void; setB: (v: string) => void; labelA?: string; labelB?: string; phrase?: boolean }) {
   const { a, b } = props;
+  const [them, longOk] = props.phrase ? ["Фрази", "✓ Достатньо довга"] : ["Паролі", "✓ Достатньо довгий"];
   const long = [...a].length >= MIN;
   const match = b.length > 0 && a === b;
   return (
@@ -25,20 +26,22 @@ function PasswordPair(props: { a: string; b: string; setA: (v: string) => void; 
         <span>{props.labelA ?? "Пароль"}</span>
         <input className="input" type="password" autoComplete="new-password" value={a} onChange={(e) => props.setA(e.target.value)} />
         <span className={a && long ? "ok" : "small"} aria-live="polite">
-          {!a ? `Щонайменше ${MIN} символів.` : long ? "✓ Достатньо довгий" : `Щонайменше ${MIN} символів · зараз ${[...a].length}`}
+          {!a ? `Щонайменше ${MIN} символів.` : long ? longOk : `Щонайменше ${MIN} символів · зараз ${[...a].length}`}
         </span>
       </label>
       <label className="field">
         <span>{props.labelB ?? "Пароль ще раз"}</span>
         <input className="input" type="password" autoComplete="new-password" value={b} onChange={(e) => props.setB(e.target.value)} />
         <span className={b && !match ? "bad" : "ok"} aria-live="polite">
-          {!b ? "" : match ? "✓ Паролі збігаються" : "Паролі не збігаються"}
+          {!b ? "" : match ? `✓ ${them} збігаються` : `${them} не збігаються`}
         </span>
       </label>
     </>
   );
 }
 const pairOk = (a: string, b: string) => [...a].length >= MIN && a === b;
+const ownErr = (s: string) => (s === "same_as_password" ? "Фраза для відновлення не може бути такою самою, як пароль: інакше, забувши пароль, ви забудете й її."
+  : s === "short_phrase" ? `Фраза — щонайменше ${MIN} символів.` : s === "wrong" ? "Поточний пароль не підходить." : "");
 
 function Form(props: { onSubmit: () => void; className?: string; label?: string; children: ReactNode }) {
   const submit = (e: FormEvent) => { e.preventDefault(); props.onSubmit(); };
@@ -71,6 +74,8 @@ export default function App() {
   const [waitUntil, setWaitUntil] = useState(0);
   const [wrong, setWrong] = useState(false);
   const [phrase, setPhrase] = useState("");
+  const [ownKey, setOwnKey] = useState(false); // step 3: a phrase of one's own instead of the 12 words
+  const [own1, setOwn1] = useState(""), [own2, setOwn2] = useState("");
   const [cur, setCur] = useState("");
   const [delPw, setDelPw] = useState("");
   const [, tick] = useState(0);
@@ -99,7 +104,7 @@ export default function App() {
 
   // autolock after inactivity
   const lastActive = useRef(Date.now());
-  const inApp = screen === "projects" || screen === "changePass";
+  const inApp = screen === "projects" || screen === "changePass" || screen === "ownRecovery";
   useEffect(() => {
     if (!inApp || !me) return;
     const mark = () => { lastActive.current = Date.now(); };
@@ -130,7 +135,7 @@ export default function App() {
 
   function startSetup() {
     invoke("cancel_profile");
-    setName(""); setIni(""); setIniEdited(false); setPw(""); setPw2(""); setWords([]); setAnswers(["", "", ""]); setSaved(false);
+    setName(""); setIni(""); setIniEdited(false); setPw(""); setPw2(""); setWords([]); setAnswers(["", "", ""]); setSaved(false); setOwnKey(false); setOwn1(""); setOwn2("");
     go("you");
   }
 
@@ -149,6 +154,20 @@ export default function App() {
       if (!s.startsWith("mismatch:")) throw e;
       setError(`Не збігається: слово № ${s.slice(9).split(",").join(", № ")}. Звірте записаний ключ з екраном.`);
     }
+  });
+  const confirmOwn = () => run(async () => {
+    try {
+      const p = await invoke<Profile>("confirm_profile_own", { phrase: own1 });
+      setMe(p); setSel(p.id); setOwn1(""); setOwn2(""); go("disk");
+    } catch (e) { const m = ownErr(err(e)); if (!m) throw e; setError(m); }
+  });
+  const saveOwnRecovery = () => run(async () => {
+    try {
+      const p = await invoke<Profile>("set_own_recovery", { password: cur, phrase: own1 });
+      setMe(p); setCur(""); setOwn1(""); setOwn2("");
+      setMsg("Тепер профіль відновлюється вашою фразою. Старі 12 слів його більше не відкривають (лише резервні копії, зроблені раніше).");
+      go("projects");
+    } catch (e) { const m = ownErr(err(e)); if (!m) throw e; setError(m); }
   });
   const finishSetup = () => { setWords([]); enter(me!, "Профіль створено. Пароль і ключ відновлення відмикають усі ваші майбутні проєкти."); };
 
@@ -190,13 +209,13 @@ export default function App() {
       setPw(""); setPw2(""); go("recoverPass");
     } catch (e) {
       const s = err(e);
-      if (s === "bad_words") setError("Це не схоже на ключ відновлення: перевірте написання кожного слова.");
-      else if (s === "wrong_key") setError(`Ключ не підходить до профілю «${selected?.name}». Перевірте порядок слів.`);
+      if (s === "bad_words") setError(selected?.recovery_own ? "Впишіть фразу для відновлення." : "Це не схоже на ключ відновлення: перевірте написання кожного слова.");
+      else if (s === "wrong_key") setError(selected?.recovery_own ? `Фраза не підходить до профілю «${selected?.name}». Перевірте написання.` : `Ключ не підходить до профілю «${selected?.name}». Перевірте порядок слів.`);
       else throw e;
     }
   });
   const recover = () => run(async () => {
-    enter(await invoke<Profile>("recover", { id: sel, phrase, password: pw }), "Новий пароль задано. Ключ відновлення лишається той самий — зберігайте його й далі.");
+    enter(await invoke<Profile>("recover", { id: sel, phrase, password: pw }), selected?.recovery_own ? "Новий пароль задано. Фраза для відновлення лишається та сама." : "Новий пароль задано. Ключ відновлення лишається той самий — зберігайте його й далі.");
   });
 
   const changePassword = () => run(async () => {
@@ -308,10 +327,36 @@ export default function App() {
                 </Form>
               )}
 
-              {screen === "key" && (
+              {screen === "key" && ownKey && (
+                <Form className="stack" onSubmit={() => pairOk(own1, own2) && !busy && confirmOwn()}>
+                  <div className="stack" style={{ gap: 18 }}>
+                    <div className="stack">
+                      <h2>Ключ відновлення профілю</h2>
+                      <div className="seg" role="group" aria-label="Вид ключа відновлення">
+                        <button type="button" aria-pressed={false} onClick={() => { setOwnKey(false); setError(""); }}>12 слів (надійніше)</button>
+                        <button type="button" aria-pressed={true}>Власна фраза</button>
+                      </div>
+                      <p className="lead">Якщо ви забудете пароль, ця фраза дозволить відкрити ваші проєкти й задати новий пароль. Оберіть те, що знаєте лише ви й не забудете: кілька слів, речення, улюблений рядок. Великі літери й зайві пробіли не враховуються.</p>
+                    </div>
+                    <PasswordPair a={own1} b={own2} setA={setOwn1} setB={setOwn2} labelA="Фраза для відновлення" labelB="Фраза ще раз" phrase />
+                    <span className="small">Фраза має відрізнятися від пароля. Чим довша й менш очевидна, тим надійніше: одне слово, ім'я чи дату легко вгадати. Запишіть її й зберігайте окремо від комп'ютера.</span>
+                    {errorLine}
+                    <div className="row">
+                      <button type="button" className="btn quiet" onClick={() => { invoke("cancel_profile"); setWords([]); go("pass"); }}>Назад</button>
+                      <button type="submit" className="btn primary" disabled={!pairOk(own1, own2) || busy}>{busy ? "Зберігаю…" : "Далі"}</button>
+                    </div>
+                  </div>
+                </Form>
+              )}
+
+              {screen === "key" && !ownKey && (
                 <>
                   <div className="stack">
                     <h2>Ключ відновлення профілю</h2>
+                    <div className="seg" role="group" aria-label="Вид ключа відновлення">
+                      <button type="button" aria-pressed={true}>12 слів (надійніше)</button>
+                      <button type="button" aria-pressed={false} onClick={() => { setOwnKey(true); setError(""); }}>Власна фраза</button>
+                    </div>
                     <p className="lead">Якщо ви забудете пароль, лише ці 12 слів дозволять відкрити ваші проєкти й задати новий пароль. Ключ показується тільки зараз.</p>
                   </div>
                   <ol className="keygrid" aria-label="Ключ відновлення, 12 слів">
@@ -440,7 +485,26 @@ export default function App() {
             </Form>
           )}
 
-          {screen === "recover" && (
+          {screen === "recover" && selected?.recovery_own && (
+            <Form label="Відновлення доступу" onSubmit={() => phrase.trim() && !busy && checkPhrase()}>
+              <span className="label">Забули пароль · {selected?.name}</span>
+              <div className="stack">
+                <h2>Фраза для відновлення</h2>
+                <p className="lead">Впишіть фразу, яку ви обрали для відновлення профілю. Великі літери й зайві пробіли не важать.</p>
+              </div>
+              <label className="field">
+                <span>Ваша фраза</span>
+                <input className="input" type="password" autoComplete="off" spellCheck={false} value={phrase} onChange={(e) => { setPhrase(e.target.value); setError(""); }} />
+              </label>
+              {errorLine}
+              <div className="row">
+                <button type="button" className="btn quiet" onClick={() => go("login")}>Назад</button>
+                <button type="submit" className="btn primary" disabled={!phrase.trim() || busy}>{busy ? "Перевіряю…" : "Далі"}</button>
+              </div>
+            </Form>
+          )}
+
+          {screen === "recover" && !selected?.recovery_own && (
             <Form label="Відновлення доступу" onSubmit={() => recWords.length === 12 && !busy && checkPhrase()}>
               <span className="label">Забули пароль · {selected?.name}</span>
               <div className="stack">
@@ -502,7 +566,7 @@ export default function App() {
                 <aside aria-label="Профіль">
                   <span className="label">Профіль</span>
                   <div className="kv"><span>Ініціали</span><span className="mono">{me.initials}</span></div>
-                  <div className="kv"><span>Ключ відновлення</span><span className="mono">створено</span></div>
+                  <div className="kv"><span>Ключ відновлення</span><span className="mono">{me.recovery_own ? "власна фраза" : "12 слів"}</span></div>
                   <label className="kv">
                     <span>Замикати після бездіяльності</span>
                     <select className="input" value={me.autolock_min} onChange={(e) => setAutolock(Number(e.target.value))}>
@@ -512,6 +576,7 @@ export default function App() {
                   {errorLine}
                   <div className="rule">
                     <button className="btn sm" style={{ textAlign: "left" }} onClick={() => { setCur(""); setPw(""); setPw2(""); setMsg(""); go("changePass"); }}>Змінити пароль</button>
+                    <button className="btn sm" style={{ textAlign: "left" }} onClick={() => { setCur(""); setOwn1(""); setOwn2(""); setMsg(""); go("ownRecovery"); }}>{me.recovery_own ? "Змінити фразу відновлення" : "Власна фраза замість 12 слів"}</button>
                     <button className="btn sm quiet" style={{ textAlign: "left" }} onClick={() => { invoke("lock"); setMe(null); setLpw(""); refresh(); go("login"); }}>Вийти · інший профіль</button>
                   </div>
                   {disk !== true && (
@@ -537,6 +602,24 @@ export default function App() {
               <div className="row">
                 <button type="button" className="btn quiet" onClick={() => { setPw(""); setPw2(""); go("projects"); }}>Скасувати</button>
                 <button type="submit" className="btn primary" disabled={!cur || !pairOk(pw, pw2) || busy}>{busy ? "Зберігаю…" : "Змінити пароль"}</button>
+              </div>
+            </Form>
+          )}
+
+          {screen === "ownRecovery" && me && (
+            <Form label="Фраза для відновлення" onSubmit={() => cur && pairOk(own1, own2) && !busy && saveOwnRecovery()}>
+              <h2>Фраза для відновлення профілю</h2>
+              <p className="lead">Якщо ви забудете пароль, ця фраза відкриє ваші проєкти й дозволить задати новий пароль{me.recovery_own ? "" : " — замість 12 слів"}. Оберіть те, що знаєте лише ви: кілька слів, речення, улюблений рядок. Великі літери й зайві пробіли не враховуються.</p>
+              <label className="field">
+                <span>Поточний пароль</span>
+                <input className="input" type="password" autoComplete="current-password" value={cur} onChange={(e) => { setCur(e.target.value); setError(""); }} />
+              </label>
+              <PasswordPair a={own1} b={own2} setA={setOwn1} setB={setOwn2} labelA="Нова фраза для відновлення" labelB="Фраза ще раз" phrase />
+              <span className="small">Фраза має відрізнятися від пароля. Чим довша й менш очевидна, тим надійніше: одне слово, ім'я чи дату легко вгадати. {me.recovery_own ? "" : "Після зміни старі 12 слів профіль більше не відкривають; резервні копії, зроблені раніше, відкриваються й ними."}</span>
+              {errorLine}
+              <div className="row">
+                <button type="button" className="btn quiet" onClick={() => { setOwn1(""); setOwn2(""); go("projects"); }}>Скасувати</button>
+                <button type="submit" className="btn primary" disabled={!cur || !pairOk(own1, own2) || busy}>{busy ? "Зберігаю…" : "Зберегти фразу"}</button>
               </div>
             </Form>
           )}

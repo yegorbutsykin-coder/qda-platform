@@ -27,7 +27,9 @@ export type Shared = { fields: Field[]; interviews: Interview[]; codes: Code[]; 
   /** Confirmed emotional tone of coded fragments, by the id of the fragment's first coding (stage 4.3). */
   tones?: Record<string, "neg" | "amb" | "pos" | "neu">;
   /** The article (stage 5); travels in packages like the coding. */
-  article?: import("./article").Article };
+  article?: import("./article").Article;
+  /** Descriptive phenomenological analysis: sense units, transformations, constituents (the experience book). */
+  dfa?: import("./dfa").Dfa };
 /** Set in a project made from a received package: whose project it copies, and when it came. */
 export type CopyOf = { project: string; from: Person & { id: string }; kind: "copy" | "supervisor"; stage?: string; sent: number; received: number; blind: boolean };
 export type OrigReplica = Replica & { role: Role | null; id?: string };

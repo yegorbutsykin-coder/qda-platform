@@ -11,10 +11,12 @@ import ArticleView from "./ArticleView";
 import { asMethod, emptyArticle, numbers, putFloat, sectionsOf, type Caret, type FigFloat } from "./article";
 import { RemarksView, Remark, type RemarkPatch, type RemarkRow } from "./Remarks";
 import { updateCopy } from "./exchange";
-import CodingSheet, { type CodingActions, type EditActions } from "./CodingSheet";
+import CodingSheet, { type CodingActions, type EditActions, type UnitsMode } from "./CodingSheet";
+import { addCut, addStep, dropStep, emptyDfa, removeCut, setTr, startId, stepUsed, unitsOf, type Dfa, type Unit } from "./dfa";
+import { DfaTable, UnitList } from "./Experience";
 import Codebook from "./Codebook";
 import CodesPanel from "./CodesPanel";
-import { dropReplica, newCodesByInterview, nextColor, noteParts, saturationAt, quote, remapApps, sharedFragments, splitReplica, statuses, type Code } from "./coding";
+import { dropReplica, newCodesByInterview, nextColor, noteParts, saturationAt, quote, remapApps, sharedFragments, splitReplica, statuses, type App, type Code } from "./coding";
 import { applyDict as segsFor } from "./text";
 import { adoptPeople, emptyPrivate, emptyShared, ensureIds, initialsOf, type Person, GENDERS, newId, noteKey, pad, rebuild, speaker, type Tx, type Card, type Field, type FieldType, type OrigReplica, type Private, type Shared } from "./model";
 import Dictionary from "./Dictionary";
@@ -122,7 +124,10 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   const [shared, setShared] = useState<Shared>(emptyShared());
   const [priv, setPriv] = useState<Private>(emptyPrivate());
   const [error, setError] = useState("");
-  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share" | "merge" | "remarks" | "update" | "analysis" | "article">("main");
+  const [view, setView] = useState<"main" | "add" | "card" | "dict" | "frags" | "compare" | "share" | "merge" | "remarks" | "update" | "analysis" | "article" | "dfa">("main");
+  // Descriptive phenomenological analysis: what a click in the transcript marks, and the unit open in the book.
+  const [markUnits, setMarkUnits] = useState(true);
+  const [unitFocus, setUnitFocus] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [underlines, setUnderlines] = useState(true);
   const [leftTab, setLeftTab] = useState<"iv" | "codes">("iv");
@@ -404,7 +409,12 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
     const rest = Object.fromEntries(Object.entries(priv.originals).filter(([k]) => k !== iv!.id));
     const next = shared.interviews.filter((x) => x.id !== iv!.id);
     const notes = Object.fromEntries(Object.entries(shared.notes).filter(([k]) => !k.startsWith(iv!.id + ":")));
-    undoable(`Інтерв'ю ${pad(iv!.n)} · ${iv!.card.pseudonym} видалено.`, { ...shared, interviews: next, apps: shared.apps.filter((a) => a.iv !== iv!.id), notes },
+    const d = shared.dfa;
+    const dfa = d && (() => {
+      const gone = new Set([startId(iv!.id), ...d.cuts.filter((c) => c.iv === iv!.id).map((c) => c.id)]);
+      return { ...d, cuts: d.cuts.filter((c) => c.iv !== iv!.id), tr: Object.fromEntries(Object.entries(d.tr).filter(([k]) => !gone.has(k))) };
+    })();
+    undoable(`Інтерв'ю ${pad(iv!.n)} · ${iv!.card.pseudonym} видалено.`, { ...shared, interviews: next, apps: shared.apps.filter((a) => a.iv !== iv!.id), notes, ...(dfa ? { dfa } : {}) },
       { ...priv, originals: rest, dict: priv.dict.filter((d) => d.scope !== iv!.id) });
     setSel(next[0]?.id ?? "");
   };
@@ -475,21 +485,24 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
   // ----- editing the transcript -----
   const origs = () => priv.originals[iv!.id] ?? [];
   const setOrigs = (list: OrigReplica[]) => ({ ...priv, originals: { ...priv.originals, [iv!.id]: list } });
+  // Sense-unit boundaries are marks like codes: the same remapping keeps them on their words.
+  const withCuts = (s0: Shared, f: (cuts: App[]) => App[]): Shared => (s0.dfa ? { ...s0, dfa: { ...s0.dfa, cuts: f(s0.dfa.cuts) } } : s0);
   const edit: EditActions = {
     text(rep, text) {
       const before = origs()[rep].text;
       if (text === before) return;
-      commit({ ...shared, apps: remapApps(shared.apps, iv!.id, rep, before, text) }, setOrigs(origs().map((r, i) => (i === rep ? { ...r, text } : r))));
+      commit(withCuts({ ...shared, apps: remapApps(shared.apps, iv!.id, rep, before, text) }, (c) => remapApps(c, iv!.id, rep, before, text)),
+        setOrigs(origs().map((r, i) => (i === rep ? { ...r, text } : r))));
     },
     role(rep, role) { commit(shared, setOrigs(origs().map((r, i) => (i === rep ? { ...r, role } : r)))); },
     remove(rep) {
       const r = dropReplica(shared.apps, shared.notes, iv!.id, rep);
-      undoable(`Репліку ${rep + 1} видалено разом з її кодами й коментарем.`, { ...shared, ...r }, setOrigs(origs().filter((_, i) => i !== rep)));
+      undoable(`Репліку ${rep + 1} видалено разом з її кодами й коментарем.`, withCuts({ ...shared, ...r }, (c) => dropReplica(c, {}, iv!.id, rep).apps), setOrigs(origs().filter((_, i) => i !== rep)));
     },
     join(rep) {
       const list = origs(), prev = list[rep - 1];
       const r = dropReplica(shared.apps, shared.notes, iv!.id, rep, { offset: prev.text.length + 1 });
-      undoable(`Репліку ${rep + 1} приєднано до попередньої.`, { ...shared, ...r },
+      undoable(`Репліку ${rep + 1} приєднано до попередньої.`, withCuts({ ...shared, ...r }, (c) => dropReplica(c, {}, iv!.id, rep, { offset: prev.text.length + 1 }).apps),
         setOrigs(list.flatMap((x, i) => (i === rep ? [] : i === rep - 1 ? [{ ...x, text: x.text + " " + list[rep].text }] : [x]))));
     },
     play: priv.audio[iv?.id ?? ""] && audioState[iv?.id ?? ""] === "ok" ? () => {
@@ -502,10 +515,37 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
       const list = origs();
       const apps = remapApps(shared.apps, iv!.id, rep, list[rep].text, text);
       const r = splitReplica(apps, shared.notes, iv!.id, rep, text, pos, newId);
-      undoable(`Репліку ${rep + 1} розділено на дві. У другої немає таймкоду.`, { ...shared, apps: r.apps, notes: r.notes },
+      const cutsAfter = (c: App[]) => splitReplica(remapApps(c, iv!.id, rep, list[rep].text, text), {}, iv!.id, rep, text, pos, newId).apps;
+      undoable(`Репліку ${rep + 1} розділено на дві. У другої немає таймкоду.`, withCuts({ ...shared, apps: r.apps, notes: r.notes }, cutsAfter),
         setOrigs(list.flatMap((x, i) => (i === rep ? [{ ...x, text: r.first }, { ...x, t: null, text: r.second }] : [x]))));
     },
   };
+
+  // ----- the experience book (descriptive phenomenological analysis) -----
+  const dfa: Dfa | null = shared.dfa?.on ? shared.dfa : null;
+  const setDfa = (d: Dfa) => commit({ ...shared, dfa: d }, priv);
+  const ivReps = iv ? priv.originals[iv.id] ?? [] : [];
+  const units: Unit[] = dfa && iv ? unitsOf(iv.id, ivReps, dfa.cuts) : [];
+  const unitMode: UnitsMode | undefined = dfa && iv && markUnits && !editing ? {
+    list: units, cuts: dfa.cuts, focus: unitFocus, ro: !!copy,
+    add: (rep, s0) => setDfa(addCut(dfa, iv.id, rep, s0, ivReps, newId(), me)),
+    remove: (cut) => {
+      const u = units.find((x) => x.id === cut);
+      undoable(`Межу перед одиницею ${u?.n ?? ""} прибрано: одиниця злилася з попередньою${dfa.tr[cut]?.some((t) => t.trim()) ? ", її трансформації дописано до попередньої" : ""}.`,
+        { ...shared, dfa: removeCut(dfa, iv.id, ivReps, cut) }, priv);
+    },
+    pick: (u) => setUnitFocus(u),
+  } : undefined;
+  const toUnit = (u: Unit) => { setView("main"); setMarkUnits(true); setUnitFocus(u.id); setTarget(u.parts[0].rep); };
+  const toggleDfa = (on: boolean) => {
+    setDfa({ ...(shared.dfa ?? emptyDfa()), on });
+    setMarkUnits(on);
+    if (!on && view === "dfa") setView("main");
+  };
+  const bookProps = dfa && iv ? {
+    dfa, units, reps: ivReps, dict: priv.dict, iv: iv.id, ro: !!copy, focus: unitFocus, pick: setUnitFocus,
+    setTr: (u: string, k: number, t: string) => setDfa(setTr(dfa, u, k, t)), toText: toUnit,
+  } : null;
 
   /** The transcript as on screen (with replacements, or the original) into a Word file. */
   async function exportWord() {
@@ -566,6 +606,13 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
               <span className="title">{meta.name}</span>
             </div>
             <div className="grow" />
+            {(!copy || dfa) && (
+              <label className="switch" title="Дескриптивний феноменологічний аналіз (Джорджі): сенсові одиниці й їхня трансформація поруч із кодами">
+                <input type="checkbox" role="switch" checked={!!dfa} disabled={!!copy} onChange={(e) => toggleDfa(e.target.checked)} />
+                <span>Досвідна книга (ДФА)</span>
+              </label>
+            )}
+            {dfa && <button className="btn sm" onClick={() => setView("dfa")}>Досвідна книга</button>}
             <button className="btn sm" onClick={() => setView("article")}>Стаття</button>
             {shared.apps.length > 0 && <button className="btn sm" onClick={() => { setFigPreset(null); setView("analysis"); }}>Візуальний аналіз</button>}
             {remarkRows.length > 0 && <button className="btn sm" onClick={() => setView("remarks")}>Зауваження · {openRemarks}</button>}
@@ -668,6 +715,12 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
                         <span className="small grow">{original ? "Справжні слова бачите лише ви." : "Так текст бачитимуть колеги й супервайзер(ка)."}</span>
                       </>
                     )}
+                    {dfa && (
+                      <div className="seg" role="group" aria-label="Що позначати в тексті">
+                        <button aria-pressed={!markUnits} onClick={() => setMarkUnits(false)}>Коди</button>
+                        <button aria-pressed={markUnits} onClick={() => setMarkUnits(true)}>Сенсові одиниці</button>
+                      </div>
+                    )}
                     <div className="seg" role="group" aria-label="Колір підкреслень">
                       <button aria-pressed={!byCat} onClick={() => setByCat(false)}>Мікрокоди</button>
                       <button aria-pressed={byCat} onClick={() => setByCat(true)}>Категорії</button>
@@ -741,7 +794,7 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
                   ) : (
                   <CodingSheet iv={iv} priv={priv} codes={byCat ? shared.codes.map((c) => ({ ...c, color: shared.cats.find((k) => k.id === c.cat)?.color ?? c.color })) : shared.codes} apps={whose === "all" ? shared.apps : shared.apps.filter((a) => a.by === whose)} notes={shared.notes} me={me} people={shared.people} original={original}
                     underlines={underlines} focus={focus} flagged={copy ? NONE : flagged} act={act} target={target}
-                    seek={priv.audio[iv.id] && audioState[iv.id] === "ok" ? seek : undefined} nowRep={nowRep} edit={editing ? edit : undefined} />
+                    seek={priv.audio[iv.id] && audioState[iv.id] === "ok" ? seek : undefined} nowRep={nowRep} edit={editing ? edit : undefined} units={unitMode} />
                   )}
                   {!copy && <div className="legend small">
                     <span><mark className="repl">[ім'я]</mark> замінено за словником</span>
@@ -903,8 +956,18 @@ export default function ProjectView(props: { id: string; me: Person & { id: stri
 
       {view === "main" && shared.interviews.length > 0 && (
         <Codebook people={shared.people} codes={shared.codes} apps={shared.apps} focus={focus} setFocus={setFocus}
+          book={unitMode && bookProps ? { title: "Досвідна книга", chip: `Досвідна книга · ${units.length} ${units.length % 10 === 1 && units.length % 100 !== 11 ? "одиниця" : [2, 3, 4].includes(units.length % 10) && ![12, 13, 14].includes(units.length % 100) ? "одиниці" : "одиниць"}`,
+            body: <UnitList {...bookProps} openTable={() => setView("dfa")} /> } : undefined}
           rename={(id, name) => patchCode(id, { name })} recolor={(id, color) => patchCode(id, { color })}
           setNote={(id, note) => patchCode(id, { note })} remove={removeCode} showFragments={(id) => { setFocus(id); setView("frags"); }} />
+      )}
+
+      {view === "dfa" && bookProps && dfa && (
+        <DfaTable {...bookProps} interviews={shared.interviews} setIv={(id) => { setSel(id); setUnitFocus(null); }} onBack={() => setView("main")}
+          renameStep={(k, name) => setDfa({ ...dfa, steps: dfa.steps.map((x, i) => (i === k ? name : x)) })} addStep={() => setDfa(addStep(dfa))}
+          dropStep={(k) => (stepUsed(dfa, k)
+            ? undoable(`Крок «${dfa.steps[k]}» прибрано разом із записаним у ньому.`, { ...shared, dfa: dropStep(dfa, k) }, priv)
+            : setDfa(dropStep(dfa, k)))} />
       )}
 
       {view === "frags" && fragCode && (

@@ -1,5 +1,5 @@
 import { initialsOf, type Person } from "./model";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { App, Code } from "./coding";
 
 type Box = { x: number; y: number; w: number; h: number };
@@ -20,6 +20,8 @@ export default function Codebook(props: {
   rename: (id: string, name: string) => void; recolor: (id: string, color: string) => void;
   setNote: (id: string, note: string) => void; remove: (c: Code) => void; showFragments: (id: string) => void;
   people?: Record<string, Person>;
+  /** Another book in the same window (the experience book of descriptive phenomenological analysis). */
+  book?: { title: string; chip: string; body: ReactNode };
 }) {
   // Bottom-left by default (the right edge holds the comments); place and size are remembered.
   const [box, setBox] = useState<Box>(() => {
@@ -96,20 +98,20 @@ export default function Codebook(props: {
   if (folded) {
     return (
       <button className="cbchip" style={{ left: box.x, top: box.y }} onPointerDown={grab("move")}
-        onClick={() => { if (!moved.current) fold(false); }} aria-label="Розгорнути кодову книгу">
-        Кодова книга · {props.codes.length} {props.codes.length === 1 ? "код" : "кодів"}
+        onClick={() => { if (!moved.current) fold(false); }} aria-label={`Розгорнути: ${props.book?.title ?? "кодова книга"}`}>
+        {props.book ? props.book.chip : <>Кодова книга · {props.codes.length} {props.codes.length === 1 ? "код" : "кодів"}</>}
       </button>
     );
   }
   return (
-    <section className="codebook" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} aria-label="Кодова книга">
+    <section className="codebook" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} aria-label={props.book?.title ?? "Кодова книга"}>
       {EDGES.map((e) => <div key={e} className={"cbedge " + e} onPointerDown={grab(e)} aria-hidden="true" />)}
       <div className="cbhead" onPointerDown={grab("move")} title="Перетягніть, щоб перемістити; розмір — за будь-який край">
-        <span className="label" style={{ color: "var(--ink)" }}>Кодова книга · {props.codes.length}</span>
+        <span className="label" style={{ color: "var(--ink)" }}>{props.book ? props.book.chip : `Кодова книга · ${props.codes.length}`}</span>
         <span className="grow" />
-        <button className="x" aria-label="Згорнути кодову книгу" onPointerDown={(e) => e.stopPropagation()} onClick={() => fold(true)}>–</button>
+        <button className="x" aria-label={`Згорнути: ${props.book?.title ?? "кодова книга"}`} onPointerDown={(e) => e.stopPropagation()} onClick={() => fold(true)}>–</button>
       </div>
-      <div className="cbbody">
+      {props.book ? <div className="cbbody">{props.book.body}</div> : <div className="cbbody">
         {!sorted.length && <span className="small">Кодів ще немає. Виділіть фрагмент у транскрипті й назвіть код.</span>}
         {sorted.map((c) => (
           <Fragment key={c.id}>
@@ -122,7 +124,7 @@ export default function Codebook(props: {
             {c.id === props.focus && card}
           </Fragment>
         ))}
-      </div>
+      </div>}
     </section>
   );
 }

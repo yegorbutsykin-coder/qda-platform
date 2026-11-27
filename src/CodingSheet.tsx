@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Remark, type RemarkPatch } from "./Remarks";
 import { noteParts, pieces, quote, snap, type App, type Code } from "./coding";
 import { applyDict, insertMark, MARK_RE, TX_MARKS, wordKey, type Role, type Segment } from "./text";
 import { initialsOf, type Person, speaker, type Interview, type Note, type Private } from "./model";
+import { wordStart, type Unit } from "./dfa";
 
 type Sel = { rep: number; s: number; e: number; x: number; y: number };
 
@@ -225,10 +226,16 @@ function NoteCell(props: {
 
 const CAP = /(\p{Lu}[\p{Ll}'’ʼ-]*\p{Ll}|\p{Lu}{2,6})/gu;
 
+/** «Сенсові одиниці» mode: a click puts a boundary before the word; «/» takes it away; a number picks the unit. */
+export type UnitsMode = {
+  list: Unit[]; cuts: App[]; focus: string | null; ro: boolean;
+  add: (rep: number, s: number) => void; remove: (cut: string) => void; pick: (unit: string) => void;
+};
+
 export default function CodingSheet(props: {
   iv: Interview; priv: Private; codes: Code[]; apps: App[]; notes: Record<string, Note>; me: string;
   original: boolean; underlines: boolean; focus: string | null; flagged: Set<string>; act: CodingActions; target?: number | null;
-  seek?: (t: string) => void; nowRep?: number | null; edit?: EditActions; people?: Record<string, Person>;
+  seek?: (t: string) => void; nowRep?: number | null; edit?: EditActions; people?: Record<string, Person>; units?: UnitsMode;
 }) {
   const { iv, priv, codes, original, focus } = props;
   const [sel, setSel] = useState<Sel | null>(null);
@@ -271,9 +278,24 @@ export default function CodingSheet(props: {
     );
   }
 
-  function onMouseUp() {
+  const U = props.units;
+  const unitAt = (rep: number, o: number) => U?.list.find((u) => u.parts.some((p) => p.rep === rep && o >= p.s && o < p.e));
+
+  function onMouseUp(ev: React.MouseEvent) {
     const s = window.getSelection();
     if (!s || !s.rangeCount) return;
+    if (U) {
+      // Sense units: a click puts a boundary before the word (buttons — «/» and numbers — act on their own).
+      if ((ev.target as Element).closest("button") || !s.isCollapsed || U.ro) return;
+      const r = s.getRangeAt(0), a = offsetAt(r.startContainer, r.startOffset, false);
+      if (!a || reps[a.rep].role === "i") return;
+      const w = wordStart(reps[a.rep].text, a.o);
+      if (w === null) return;
+      const u = unitAt(a.rep, w);
+      if (u && u.parts[0].rep === a.rep && u.parts[0].s === w) { U.pick(u.id); return; }
+      U.add(a.rep, w);
+      return;
+    }
     const range = s.getRangeAt(0);
     const rect = range.getBoundingClientRect();
     if (s.isCollapsed) {
@@ -298,16 +320,18 @@ export default function CodingSheet(props: {
   }
 
   return (
-    <article className="paper" onMouseUp={onMouseUp}>
+    <article className={"paper" + (U ? " units" : "")} onMouseUp={onMouseUp}>
       <div className="paperhead">
         <span className="label" style={{ width: 84 }}>Час</span>
-        <span className="label grow">Транскрипт · виділіть фрагмент, щоб закодувати</span>
+        <span className="label grow">{U ? (U.ro ? "Транскрипт · сенсові одиниці (змінює власник(ця) проєкту)" : "Транскрипт · клік на слово — межа сенсової одиниці перед ним; «/» — прибрати межу; номер — відкрити одиницю") : "Транскрипт · виділіть фрагмент, щоб закодувати"}</span>
         <span className="label notecol">Дослідницькі коментарі</span>
       </div>
       {reps.map((r, i) => {
-        const ps = pieces(segsOf(i), apps.filter((a) => a.rep === i), original);
+        // In sense-units mode the boundaries cut the text into pieces too (zero-length marks: no colour of their own).
+        const marks = U ? U.cuts.filter((c) => c.iv === iv.id && c.rep === i).map((c) => ({ ...c, e: c.s })) : [];
+        const ps = pieces(segsOf(i), [...apps.filter((a) => a.rep === i), ...marks], original);
         return (
-          <div className={"prow" + (props.target === i ? " target" : "") + (props.nowRep === i ? " now" : "")} key={i} id={`rep-${i}`}>
+          <div className={"prow" + (props.target === i ? " target" : "") + (props.nowRep === i ? " now" : "") + (U && r.role === "i" ? " u-out" : "")} key={i} id={`rep-${i}`}>
             {props.seek && r.t ? (
               <button className="tcbtn" aria-label={`Відтворити з ${r.t}`} onClick={() => props.seek!(r.t!)}>
                 <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><path d="M2 1v8l7-4z" /></svg>{r.t}
@@ -322,10 +346,22 @@ export default function CodingSheet(props: {
                 const content = p.kind !== "plain" ? p.text : p.text.split(MARK_RE).map((part, m) => m % 2
                   ? <span key={m} className="txmark">{part}</span>
                   : props.flagged.size ? part.split(CAP).map((w, j) => (j % 2 && props.flagged.has(wordKey(w)) ? <mark key={j} className="suspect">{w}</mark> : w)) : part);
+                const u = U ? unitAt(i, p.o) : undefined;
+                const first = u && u.parts[0].rep === i && u.parts[0].s === p.o;
+                const tone = u ? (u.n % 2 ? " u-odd" : " u-even") + (U!.focus === u.id ? " u-on" : "") : "";
                 return (
-                  <span key={p.o} data-o={p.o} data-len={p.len} data-k={p.kind} data-coded={p.codes.length ? "1" : undefined}
-                    className={(cls ? `m-${cls}` : "") + (dim ? " dim" : "") + (p.codes.length ? " coded" : "")}
-                    style={bars(shown.map((c) => color.get(c) ?? "#1E1E1C"))}>{content}</span>
+                  <Fragment key={p.o}>
+                    {first && (
+                      <span className="unitmark">
+                        {!u.id.endsWith(":start") && (U!.ro ? <span className="cutmark">/</span>
+                          : <button className="cutmark" onClick={() => U!.remove(u.id)} title="Прибрати межу: одиниця злиється з попередньою" aria-label={`Прибрати межу перед одиницею ${u.n}`}>/</button>)}
+                        <button className="unitno" onClick={() => U!.pick(u.id)} aria-label={`Сенсова одиниця ${u.n}: відкрити`}>{u.n}</button>
+                      </span>
+                    )}
+                    <span data-o={p.o} data-len={p.len} data-k={p.kind} data-coded={p.codes.length ? "1" : undefined}
+                      className={(cls ? `m-${cls}` : "") + (dim ? " dim" : "") + (p.codes.length ? " coded" : "") + tone}
+                      style={bars(shown.map((c) => color.get(c) ?? "#1E1E1C"))}>{content}</span>
+                  </Fragment>
                 );
               })}
             </p>
@@ -334,7 +370,7 @@ export default function CodingSheet(props: {
           </div>
         );
       })}
-      {sel && (
+      {sel && !U && (
         <Popup sel={sel} iv={iv} segs={segsOf(sel.rep)} codes={codes} apps={props.apps} me={props.me} people={props.people} act={props.act}
           close={() => { setSel(null); window.getSelection()?.removeAllRanges(); }} />
       )}
